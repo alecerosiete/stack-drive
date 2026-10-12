@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>StackDrive — Panel de prueba</title>
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+<header>
+  <h1>StackDrive <small>panel mínimo de prueba</small></h1>
+  <div class="api-base">
+    API:
+    <input id="api-base-input" value="http://localhost:3000" />
+    <button id="api-base-save" class="small">Guardar</button>
+  </div>
+  <div class="session-box gated">
+    <span id="session-email" class="mono"></span>
+    <button id="logout-btn" class="small">Cerrar sesión</button>
+  </div>
+</header>
+
+<nav class="tabs gated">
+  <button data-view="accounts" class="active">Cuentas</button>
+  <button data-view="explorer">Explorador</button>
+  <button data-view="aggregate">Multi-cuenta</button>
+  <button data-view="rebalance">Redistribución</button>
+  <button data-view="transfers">Transferencias</button>
+</nav>
+
+<main>
+
+  <!-- ───────────────────────── Sesión (anónimo) ───────────────────────── -->
+  <section class="view anon-only active">
+    <div class="card" style="max-width:380px;margin:40px auto;">
+      <h2 id="auth-mode-title">Iniciar sesión</h2>
+      <p class="hint">La identidad de StackDrive es independiente de las cuentas de Google que vincules después.</p>
+      <form id="auth-form">
+        <div class="field" style="margin-bottom:10px;">
+          <label>Email</label>
+          <input type="email" id="auth-email" required autocomplete="username" />
+        </div>
+        <div class="field" style="margin-bottom:10px;">
+          <label>Contraseña</label>
+          <input type="password" id="auth-password" required autocomplete="current-password" minlength="10" />
+        </div>
+        <div class="field anon-only" id="display-name-field" style="margin-bottom:10px; display:none;">
+          <label>Nombre (opcional)</label>
+          <input type="text" id="auth-display-name" />
+        </div>
+        <div class="row" style="justify-content:space-between;">
+          <button type="button" id="auth-toggle" class="ghost small">¿No tienes cuenta? Regístrate</button>
+          <button type="submit" class="primary" id="auth-submit">Entrar</button>
+        </div>
+      </form>
+    </div>
+  </section>
+
+  <!-- ───────────────────────── Cuentas vinculadas ─────────────────────── -->
+  <section class="view gated" data-view="accounts">
+    <div class="card">
+      <h2>Vincular una cuenta de Google</h2>
+      <p class="hint">
+        Cada clic abre el consentimiento de Google en una pestaña nueva, con <code>select_account</code> forzado:
+        puedes vincular varias cuentas de Gmail sin que una sesión activa reemplace a la anterior.
+      </p>
+      <form id="link-form" class="row">
+        <div class="field">
+          <label>Alias</label>
+          <input type="text" id="link-alias" placeholder="Personal, Trabajo…" />
+        </div>
+        <div class="field">
+          <label>Cuenta sugerida (opcional)</label>
+          <input type="email" id="link-hint" placeholder="nombre@gmail.com" />
+        </div>
+        <button type="submit" class="primary">Vincular cuenta de Google</button>
+      </form>
+    </div>
+
+    <div class="card">
+      <div class="row" style="justify-content:space-between;">
+        <h2 style="margin:0;">Cuentas vinculadas</h2>
+        <button id="accounts-refresh" class="small">Actualizar</button>
+      </div>
+      <table id="accounts-table">
+        <thead><tr><th>Cuenta</th><th>Alias</th><th>Estado</th><th>Vinculada</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <p class="empty" id="accounts-empty" style="display:none;">Todavía no has vinculado ninguna cuenta de Google.</p>
+    </div>
+  </section>
+
+  <!-- ───────────────────────── Explorador (1 cuenta) ──────────────────── -->
+  <section class="view gated" data-view="explorer">
+    <div class="card">
+      <div class="row" style="justify-content:space-between;">
+        <div class="field">
+          <label>Cuenta</label>
+          <select id="explorer-account"></select>
+        </div>
+        <div class="row">
+          <button id="explorer-new-folder" class="small">Nueva carpeta</button>
+          <label class="small" style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+            <input type="file" id="explorer-upload-input" style="display:none;" />
+            <span id="explorer-upload-btn" style="padding:4px 9px;border:1px solid var(--border);border-radius:6px;">Subir archivo</span>
+          </label>
+          <button id="explorer-refresh" class="small">Actualizar</button>
+        </div>
+      </div>
+      <div class="breadcrumbs" id="explorer-breadcrumbs"></div>
+      <table id="explorer-table">
+        <thead><tr><th>Nombre</th><th>Tipo</th><th>Tamaño</th><th>Modificado</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <p class="empty" id="explorer-empty" style="display:none;">Esta carpeta está vacía.</p>
+      <div class="row" id="explorer-quota" style="margin-top:12px;font-size:12px;color:var(--muted);"></div>
+    </div>
+  </section>
+
+  <!-- ───────────────────────── Vista multi-cuenta ─────────────────────── -->
+  <section class="view gated" data-view="aggregate">
+    <div class="card">
+      <h2>Cuota agregada</h2>
+      <p class="hint">Ocupado/total de cada cuenta vinculada y la cuenta recomendada para la próxima subida.</p>
+      <button id="aggregate-quota-refresh" class="small">Consultar cuota</button>
+      <table id="aggregate-quota-table" style="margin-top:10px;">
+        <thead><tr><th>Cuenta</th><th>Usado</th><th>Límite</th><th>% ocupado</th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <p id="aggregate-quota-totals" class="muted" style="margin-top:8px;"></p>
+    </div>
+
+    <div class="card">
+      <h2>Búsqueda global</h2>
+      <p class="hint">Busca el mismo término en todas las cuentas vinculadas a la vez.</p>
+      <form id="aggregate-search-form" class="row">
+        <div class="field" style="flex:1;min-width:220px;">
+          <label>Término</label>
+          <input type="text" id="aggregate-search-q" required />
+        </div>
+        <button type="submit" class="primary">Buscar</button>
+      </form>
+      <div id="aggregate-search-results" style="margin-top:12px;"></div>
+    </div>
+  </section>
+
+  <!-- ───────────────────────── Redistribución ─────────────────────────── -->
+  <section class="view gated" data-view="rebalance">
+    <div class="card">
+      <h2>Plan de redistribución</h2>
+      <p class="hint">
+        Solo <strong>propone</strong> movimientos para bajar del umbral de cuota: no mueve nada hasta que ejecutes
+        cada transferencia explícitamente.
+      </p>
+      <div class="row">
+        <div class="field">
+          <label>Umbral (0.1–0.99)</label>
+          <input type="number" id="rebalance-threshold" step="0.05" min="0.1" max="0.99" placeholder="0.9" />
+        </div>
+        <button id="rebalance-plan-btn" class="primary">Calcular plan</button>
+      </div>
+      <div id="rebalance-notes" class="muted" style="margin:10px 0;font-size:12px;"></div>
+      <table id="rebalance-moves-table">
+        <thead><tr><th>Archivo</th><th>Tamaño</th><th>De</th><th>A</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <p class="empty" id="rebalance-empty" style="display:none;">Ninguna cuenta está bajo presión de cuota.</p>
+    </div>
+  </section>
+
+  <!-- ───────────────────────── Transferencias ──────────────────────────── -->
+  <section class="view gated" data-view="transfers">
+    <div class="card">
+      <div class="row" style="justify-content:space-between;">
+        <h2 style="margin:0;">Transferencias entre cuentas</h2>
+        <button id="transfers-refresh" class="small">Actualizar</button>
+      </div>
+      <p class="hint">Las transferencias se ejecutan en segundo plano; esta tabla hace sondeo cada pocos segundos.</p>
+      <table id="transfers-table">
+        <thead><tr><th>Job</th><th>Estado</th><th>Progreso</th><th>Resultado</th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <p class="empty" id="transfers-empty" style="display:none;">Todavía no se ha encolado ninguna transferencia.</p>
+    </div>
+  </section>
+
+</main>
+
+<dialog id="transfer-dialog">
+  <h3>Transferir archivo a otra cuenta</h3>
+  <p class="muted mono" id="transfer-dialog-file" style="margin-top:-6px;"></p>
+  <div class="row">
+    <div class="field" style="flex:1;">
+      <label>Cuenta destino</label>
+      <select id="transfer-dialog-account"></select>
+    </div>
+  </div>
+  <div class="row">
+    <div class="field" style="flex:1;">
+      <label>Carpeta destino (id, opcional)</label>
+      <input type="text" id="transfer-dialog-parent" placeholder="root" />
+    </div>
+  </div>
+  <div class="row">
+    <label style="display:flex;align-items:center;gap:6px;font-size:13px;">
+      <input type="checkbox" id="transfer-dialog-delete" />
+      Mover (borrar el original tras verificar la copia)
+    </label>
+  </div>
+  <footer>
+    <button type="button" id="transfer-dialog-cancel">Cancelar</button>
+    <button type="button" id="transfer-dialog-confirm" class="primary">Encolar transferencia</button>
+  </footer>
+</dialog>
+
+<div class="toast-stack" id="toast-stack"></div>
+
+<script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,129 @@
+// StackDrive - esquema de datos
+// Principio clave: el `refresh_token` de Google NUNCA se persiste en claro.
+// Se guarda como sobre cifrado (AES-256-GCM) en `GoogleAccount.refreshTokenEnc`.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// Tenant de la plataforma. Es la unidad de aislamiento: toda consulta a
+/// cuentas de Google o a la Drive API se filtra siempre por `userId`.
+model User {
+  id           String   @id @default(uuid()) @db.Uuid
+  email        String   @unique
+  passwordHash String
+  displayName  String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  googleAccounts GoogleAccount[]
+  linkStates     OAuthLinkState[]
+  sessions       AuthSession[]
+
+  @@map("users")
+}
+
+/// Estado del enlace OAuth de una cuenta de Google.
+enum GoogleAccountStatus {
+  /// Credenciales válidas: el refresh_token canjea access_tokens sin error.
+  ACTIVE
+  /// Google devolvió `invalid_grant` (token revocado, caducado o permisos
+  /// cambiados). Requiere que el usuario repita el consentimiento.
+  NEEDS_REAUTH
+  /// Desvinculada por el usuario. Se conserva la fila para trazabilidad,
+  /// pero el sobre cifrado queda a NULL.
+  UNLINKED
+}
+
+/// Una cuenta de Google vinculada por un usuario. Un usuario puede tener N.
+model GoogleAccount {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// `sub` del id_token de Google: identificador estable e inmutable de la
+  /// cuenta, a diferencia del email, que el usuario puede cambiar.
+  googleUserId String
+  email        String
+  /// Alias legible elegido por el usuario ("Personal", "Facturas 2026"...).
+  alias        String?
+  picture      String?
+
+  /// Sobre cifrado del refresh_token: base64(iv || authTag || ciphertext).
+  refreshTokenEnc String?
+  /// Versión de la clave maestra usada, para permitir rotación sin downtime.
+  keyVersion      Int     @default(1)
+
+  /// Scopes realmente concedidos por Google (pueden ser menos que los pedidos).
+  scopes String[]
+
+  status      GoogleAccountStatus @default(ACTIVE)
+  statusError String?
+  lastUsedAt  DateTime?
+  linkedAt    DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+
+  /// Misma cuenta de Google no puede vincularse dos veces al mismo tenant,
+  /// pero sí puede estar vinculada por tenants distintos.
+  quotaSnapshot QuotaSnapshot?
+
+  @@unique([userId, googleUserId])
+  @@index([userId, status])
+  @@map("google_accounts")
+}
+
+/// Última medición de cuota conocida de una cuenta.
+///
+/// La escribe el vigilante periódico de cuotas (`QUOTA_WATCH_ENABLED`) y
+/// permite al panel pintar el ocupado/total sin llamar a Google en cada carga.
+/// Se guarda una sola fila por cuenta (upsert): es una foto, no un histórico.
+model QuotaSnapshot {
+  accountId   String        @id @db.Uuid
+  account     GoogleAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  /// Bytes totales. NULL en cuentas con almacenamiento ilimitado.
+  limitBytes  BigInt?
+  usageBytes  BigInt
+  usedPercent Float?
+  capturedAt  DateTime      @default(now())
+
+  @@map("quota_snapshots")
+}
+
+/// Estado anti-CSRF de un solo uso para el flujo de vinculación OAuth.
+/// Ata el `code` que devuelve Google al usuario que inició el flujo.
+model OAuthLinkState {
+  state      String    @id
+  userId     String    @db.Uuid
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Alias propuesto antes de redirigir; se aplica al completar el enlace.
+  alias      String?
+  redirectTo String?
+  consumedAt DateTime?
+  expiresAt  DateTime
+  createdAt  DateTime  @default(now())
+
+  @@index([expiresAt])
+  @@map("oauth_link_states")
+}
+
+/// Sesión de la plataforma (refresh token propio de StackDrive, no de Google).
+/// Se almacena solo el hash SHA-256 del token opaco entregado al cliente.
+model AuthSession {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @db.Uuid
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique
+  userAgent String?
+  ip        String?
+  revokedAt DateTime?
+  expiresAt DateTime
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+  @@map("auth_sessions")
+}
