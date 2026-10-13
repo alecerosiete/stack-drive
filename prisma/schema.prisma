@@ -71,6 +71,7 @@ model GoogleAccount {
   /// Misma cuenta de Google no puede vincularse dos veces al mismo tenant,
   /// pero sí puede estar vinculada por tenants distintos.
   quotaSnapshot QuotaSnapshot?
+  quotaSamples  QuotaSample[]
 
   @@unique([userId, googleUserId])
   @@index([userId, status])
@@ -81,7 +82,8 @@ model GoogleAccount {
 ///
 /// La escribe el vigilante periódico de cuotas (`QUOTA_WATCH_ENABLED`) y
 /// permite al panel pintar el ocupado/total sin llamar a Google en cada carga.
-/// Se guarda una sola fila por cuenta (upsert): es una foto, no un histórico.
+/// Se guarda una sola fila por cuenta (upsert): es la foto actual. La serie
+/// temporal vive en `QuotaSample`.
 model QuotaSnapshot {
   accountId   String        @id @db.Uuid
   account     GoogleAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
@@ -92,6 +94,26 @@ model QuotaSnapshot {
   capturedAt  DateTime      @default(now())
 
   @@map("quota_snapshots")
+}
+
+/// Histórico de cuota: una fila por medición del vigilante.
+///
+/// Se separa de `QuotaSnapshot` para que leer el estado actual siga siendo
+/// una búsqueda por clave primaria, sin ordenar la serie. Las muestras más
+/// antiguas que `QUOTA_HISTORY_DAYS` se purgan en cada pasada del vigilante.
+model QuotaSample {
+  id                BigInt        @id @default(autoincrement())
+  accountId         String        @db.Uuid
+  account           GoogleAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  /// Bytes totales. NULL en cuentas con almacenamiento ilimitado.
+  limitBytes        BigInt?
+  usageBytes        BigInt
+  usageInDriveBytes BigInt
+  usageInTrashBytes BigInt
+  capturedAt        DateTime      @default(now())
+
+  @@index([accountId, capturedAt])
+  @@map("quota_samples")
 }
 
 /// Estado anti-CSRF de un solo uso para el flujo de vinculación OAuth.

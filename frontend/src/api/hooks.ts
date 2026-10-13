@@ -16,6 +16,7 @@ import type {
   GoogleAccount,
   LinkUrl,
   Profile,
+  QuotaHistory,
   RebalancePlan,
   StorageQuota,
   BatchTransferRequest,
@@ -33,6 +34,7 @@ export const keys = {
   me: ['me'] as const,
   accounts: ['accounts'] as const,
   quotaAll: ['quota'] as const,
+  quotaHistory: (days: number) => ['quota', 'history', days] as const,
   drive: (accountId: string) => ['drive', accountId] as const,
   folder: (accountId: string, folderId: string, opts: FolderOptions) =>
     ['drive', accountId, 'folder', folderId, opts] as const,
@@ -179,6 +181,19 @@ export function useAggregateQuota() {
     queryKey: keys.quotaAll,
     queryFn: () => api<AggregateQuota>('/drive/quota'),
     staleTime: 60_000,
+  });
+}
+
+/**
+ * Bajo la clave `['quota', ...]` a propósito: lo que invalida la cuota
+ * agregada refresca también la serie (aunque solo cambie cuando mide el vigía).
+ */
+export function useQuotaHistory(days: number) {
+  return useQuery({
+    queryKey: keys.quotaHistory(days),
+    queryFn: () => api<QuotaHistory>('/drive/quota/history', { query: { days } }),
+    staleTime: 5 * 60_000,
+    placeholderData: keepPreviousData,
   });
 }
 

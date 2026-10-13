@@ -199,6 +199,7 @@ en el panel.
 | `GET` | `/drive/files` | Raíz de cada cuenta en una respuesta. |
 | `GET` | `/drive/search?q=` | Búsqueda simultánea en todas las cuentas. |
 | `GET` | `/drive/quota` | Cuota por cuenta, totales y cuenta recomendada para subir. |
+| `GET` | `/drive/quota/history?days=` | Evolución de la cuota de cada cuenta (1–365 días, 30 por defecto), según las mediciones del vigía. No llama a Google. |
 | `GET` | `/drive/rebalance/plan?threshold=` | **Propone** redistribuir (no ejecuta nada). |
 | `POST` | `/drive/transfers` | Encola una transferencia entre dos cuentas → `202 {jobId}`. |
 | `POST` | `/drive/transfers/preview` | Qué supondría transferir unos elementos: archivos, bytes, documentos de Google, conflictos de nombre y si cabe. No ejecuta nada. |
@@ -296,6 +297,12 @@ cuota de todas las cuentas y guarda la foto en `quota_snapshots`, para que el
 panel pueda avisar antes de que una cuenta se llene sin llamar a Google en cada
 carga. **Solo mide y registra: no mueve nada.**
 
+Cada medición se añade también al histórico (`quota_samples`), que alimenta
+`GET /drive/quota/history`. Las muestras más antiguas que `QUOTA_HISTORY_DAYS`
+(90 por defecto) se purgan en cada pasada. Con el vigía apagado el histórico
+queda vacío, y la respuesta lo indica con `watchEnabled: false` para que el
+panel distinga "sin cambios" de "nadie mide".
+
 ---
 
 ## 5. Estados de una cuenta vinculada
@@ -314,7 +321,7 @@ Las operaciones sobre una cuenta en `NEEDS_REAUTH` responden `409` con
 ## 6. Pruebas
 
 ```bash
-npm test          # 60 pruebas
+npm test
 npm run lint      # tsc --noEmit
 npm run build
 ```
