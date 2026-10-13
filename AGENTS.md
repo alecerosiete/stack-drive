@@ -158,9 +158,14 @@ necesitas probar contra servicios reales, `docker compose up -d` primero.
 ## Lo que NO hay (todavía)
 
 Ver "Límites conocidos" en `README.md` — *resumable upload* desde el
-navegador (solo las transferencias entre cuentas son reanudables), histórico de
-cuota (solo última foto) y desglose separado de Gmail y Fotos. No asumas que
-existen al planificar un cambio relacionado.
+navegador (solo las transferencias entre cuentas son reanudables) y desglose
+separado de Gmail y Fotos. No asumas que existen al planificar un cambio
+relacionado.
+
+El histórico de cuota (`quota_samples`, `GET /drive/quota/history`) solo se
+llena si el vigía está activo (`QUOTA_WATCH_ENABLED`): lo escribe
+`jobs/quota-watch.processor.ts` en la misma transacción que la foto actual, y
+`drive/quota-history.service.ts` solo lo lee, nunca llama a Google.
 
 Las transferencias de carpetas completas y de varios elementos viven en
 `drive/batch-transfer.service.ts` (job `batch` de la cola). Cada archivo pasa

@@ -9,6 +9,7 @@ import { AccountAvatar } from '../../components/ui/AccountAvatar';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
 import { EmptyState } from '../../components/ui/EmptyState';
+import { QuotaHistoryCard } from './QuotaHistoryCard';
 
 export function DashboardPage() {
   const accounts = useAccounts();
@@ -110,6 +111,10 @@ export function DashboardPage() {
             <ArrowRight className="size-4" />
           </Link>
         </section>
+      </div>
+
+      <div className="mt-6">
+        <QuotaHistoryCard />
       </div>
 
       <h2 className="mt-10 mb-4 font-display text-xl font-semibold tracking-tight">Cuentas</h2>

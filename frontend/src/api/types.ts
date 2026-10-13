@@ -92,6 +92,24 @@ export interface AggregateQuota extends AggregateResult<StorageQuota> {
   recommendedAccountId: string | null;
 }
 
+/** Una medición del vigía de cuota (`GET /drive/quota/history`). */
+export interface QuotaHistoryPoint {
+  capturedAt: string;
+  limit: number | null;
+  usage: number;
+  usageInDrive: number;
+  usageInDriveTrash: number;
+  usedPercent: number | null;
+}
+
+export interface QuotaHistory {
+  from: string;
+  to: string;
+  /** Sin el vigía no hay muestras: distingue "sin cambios" de "nadie mide". */
+  watchEnabled: boolean;
+  accounts: Array<{ account: AccountRef; points: QuotaHistoryPoint[] }>;
+}
+
 export interface PlannedMove {
   file: { id: string; name: string; mimeType: string; size: number };
   from: AccountRef;

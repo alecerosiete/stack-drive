@@ -145,6 +145,12 @@ describe('loadConfiguration', () => {
     );
   });
 
+  it('rechaza una retención del histórico de cuota que lo vaciaría', () => {
+    expect(() => loadConfiguration({ ...base, QUOTA_HISTORY_DAYS: '0' })).toThrow(/QUOTA_HISTORY_DAYS/);
+    expect(() => loadConfiguration({ ...base, QUOTA_HISTORY_DAYS: '1.5' })).toThrow(/QUOTA_HISTORY_DAYS/);
+    expect(loadConfiguration(base).quotaWatch.historyDays).toBe(90);
+  });
+
   it('usa el scope de Drive completo por defecto', () => {
     expect(loadConfiguration(base).google.scopes).toContain(
       'https://www.googleapis.com/auth/drive',

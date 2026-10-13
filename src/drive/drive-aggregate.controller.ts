@@ -3,7 +3,8 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { AuthenticatedUser } from '../auth/auth.types';
 import { DriveAggregateService } from './drive-aggregate.service';
-import { RebalanceQueryDto, SearchQueryDto } from './dto/drive.dto';
+import { QuotaHistoryQueryDto, RebalanceQueryDto, SearchQueryDto } from './dto/drive.dto';
+import { QuotaHistoryService } from './quota-history.service';
 
 /**
  * Vista unificada de todas las cuentas de Google del usuario.
@@ -14,7 +15,10 @@ import { RebalanceQueryDto, SearchQueryDto } from './dto/drive.dto';
 @Controller('drive')
 @UseGuards(JwtAuthGuard)
 export class DriveAggregateController {
-  constructor(private readonly aggregate: DriveAggregateService) {}
+  constructor(
+    private readonly aggregate: DriveAggregateService,
+    private readonly quotaHistory: QuotaHistoryService,
+  ) {}
 
   /** Raíz de cada cuenta en una sola respuesta. */
   @Get('files')
@@ -33,6 +37,15 @@ export class DriveAggregateController {
   @Get('quota')
   quota(@CurrentUser() user: AuthenticatedUser) {
     return this.aggregate.quota(user.id);
+  }
+
+  /**
+   * Evolución de la cuota de cada cuenta, según las mediciones del vigilante.
+   * No llama a Google: si el vigilante está apagado, la serie viene vacía.
+   */
+  @Get('quota/history')
+  quotaHistoryOf(@CurrentUser() user: AuthenticatedUser, @Query() query: QuotaHistoryQueryDto) {
+    return this.quotaHistory.history(user.id, query.days ?? 30);
   }
 
   /**
