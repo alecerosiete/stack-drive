@@ -230,6 +230,16 @@ export class RebalanceQueryDto {
   maxMoves?: number;
 }
 
+export class QuotaHistoryQueryDto {
+  /** Días hacia atrás. El vigilante purga lo que supere `QUOTA_HISTORY_DAYS`. */
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(365)
+  days?: number;
+}
+
 /** Un elemento de un lote: archivo o carpeta de la cuenta origen. */
 export class BatchItemDto {
   @IsString()

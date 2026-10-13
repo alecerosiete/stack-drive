@@ -60,6 +60,8 @@ export interface AppConfiguration {
      */
     enabled: boolean;
     cron: string;
+    /** Días de histórico que se conservan; lo anterior se purga. */
+    historyDays: number;
   };
   jobs: {
     /** Transferencias simultáneas por worker. Cada una ocupa ancho de banda. */
@@ -220,6 +222,7 @@ export function loadConfiguration(env: NodeJS.ProcessEnv = process.env): AppConf
     quotaWatch: {
       enabled: (env.QUOTA_WATCH_ENABLED?.trim() || 'false').toLowerCase() === 'true',
       cron: env.QUOTA_WATCH_CRON?.trim() || '0 */6 * * *',
+      historyDays: parseHistoryDays(env),
     },
     jobs: {
       transferConcurrency: optionalInt(env, 'TRANSFER_CONCURRENCY', 2),
@@ -242,6 +245,18 @@ function parseThreshold(raw: string | undefined): number {
     );
   }
   return value;
+}
+
+/**
+ * El vigilante purga en cada pasada lo anterior a esta ventana: un 0 o un
+ * negativo vaciaría el histórico entero sin ningún error visible.
+ */
+function parseHistoryDays(env: NodeJS.ProcessEnv): number {
+  const days = optionalInt(env, 'QUOTA_HISTORY_DAYS', 90);
+  if (!Number.isInteger(days) || days < 1) {
+    throw new ConfigError(`QUOTA_HISTORY_DAYS debe ser un entero de días >= 1, recibido "${days}"`);
+  }
+  return days;
 }
 
 /** Token de inyección para `AppConfiguration`. */
