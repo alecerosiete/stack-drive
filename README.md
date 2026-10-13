@@ -201,6 +201,8 @@ en el panel.
 | `GET` | `/drive/quota` | Cuota por cuenta, totales y cuenta recomendada para subir. |
 | `GET` | `/drive/rebalance/plan?threshold=` | **Propone** redistribuir (no ejecuta nada). |
 | `POST` | `/drive/transfers` | Encola una transferencia entre dos cuentas → `202 {jobId}`. |
+| `POST` | `/drive/transfers/preview` | Qué supondría transferir unos elementos: archivos, bytes, documentos de Google, conflictos de nombre y si cabe. No ejecuta nada. |
+| `POST` | `/drive/transfers/batch` | Encola un **lote**: varios archivos y/o carpetas completas → `202 {jobId}`. |
 | `GET` | `/drive/transfers/:jobId` | Progreso y resultado. |
 
 Los endpoints agregados son **tolerantes a fallos parciales**: devuelven
@@ -260,6 +262,29 @@ original tiene tres salvaguardas:
   pero no mover: la copia es una conversión a `.docx`/`.xlsx`, no un duplicado
   idéntico, así que no es verificable y borrar el original destruiría el único
   ejemplar del documento vivo.
+
+### Transferir carpetas y varios elementos a la vez
+
+`POST /drive/transfers/batch` acepta archivos y carpetas mezclados. El trabajo
+recorre cada carpeta, recrea su estructura en el destino y transfiere archivo
+por archivo con las mismas salvaguardas de arriba. Además:
+
+- **Fallos parciales**: un archivo que falla no detiene el lote. Cada resultado
+  guarda su carpeta destino (`targetParentId`), así que el panel puede
+  reintentar solo los fallidos.
+- **Carpeta de origen**: al mover, solo se borra si al final queda vacía (se
+  vuelve a comprobar el origen antes de borrarla).
+- **Conflictos de nombre**: `onConflict: "merge"` (por defecto) reutiliza la
+  carpeta que ya exista en el destino y no vuelve a subir los archivos con el
+  mismo md5, ni los documentos de Google cuya copia convertida («Acta.docx»)
+  sea posterior a su última edición; `"rename"` crea «Nombre (2)».
+- **Se saltan** los accesos directos, los documentos de Google sin formato
+  exportable y, al mover, los archivos de otros propietarios (no ocupan tu
+  cuota y no se pueden borrar).
+
+`POST /drive/transfers/preview` devuelve lo mismo que verá el usuario antes de
+confirmar: número de archivos y carpetas, bytes, documentos de Google,
+conflictos y si cabe en el destino.
 
 El plan reserva el mismo margen en la cuenta destino: llenar otra cuenta al
 100 % solo trasladaría el problema.
@@ -322,8 +347,11 @@ Cubren las piezas donde un error es caro y silencioso:
   conexión a mitad hay que repetir la subida completa. Para archivos de varios
   GB en redes inestables, el siguiente paso es el protocolo *resumable* de
   Google.
-- **Transferir carpetas completas entre cuentas no está soportado**: hay que
-  crear la carpeta en destino y transferir sus archivos.
+- **Las transferencias de carpetas se recorren en el servidor.** Una carpeta
+  con decenas de miles de archivos tarda en analizarse antes de empezar, y la
+  vista previa deja de contar a los 5000 archivos (avisa de que es un mínimo).
+  Los documentos de Google se copian convertidos y su carpeta de origen se
+  conserva al mover, porque nunca quedará vacía.
 - **La papelera de Drive sigue consumiendo cuota.** Tras una redistribución con
   papelera, el espacio no se libera hasta vaciarla (`DELETE /drive/:accountId/trash`)
   o usar `permanentlyDeleteSource`. Aun así, Google tarda unos minutos en

@@ -37,13 +37,15 @@ export function Dialog({ open, onClose, title, description, children, footer, cl
       // Clic en el backdrop: el evento llega al propio <dialog>.
       onClick={(event) => event.target === ref.current && onClose()}
       className={cn(
-        'card m-auto w-[min(92vw,480px)] p-0 text-ink backdrop:animate-fade open:animate-pop',
+        // Alto acotado: cabecera y pie quedan fijos y solo el contenido hace
+        // scroll, para que el botón de confirmar no desaparezca en pantallas bajas.
+        'card m-auto max-h-[calc(100dvh-2rem)] w-[min(92vw,480px)] overflow-hidden p-0 text-ink backdrop:animate-fade open:animate-pop',
         className,
       )}
     >
       {open && (
-        <div className="flex flex-col">
-          <header className="flex items-start gap-4 px-6 pt-5 pb-4">
+        <div className="flex max-h-[calc(100dvh-2rem)] flex-col">
+          <header className="flex shrink-0 items-start gap-4 px-6 pt-5 pb-4">
             <div className="min-w-0 flex-1">
               <h2 className="font-display text-lg font-semibold tracking-tight">{title}</h2>
               {description && <p className="mt-1 text-sm text-muted">{description}</p>}
@@ -57,9 +59,9 @@ export function Dialog({ open, onClose, title, description, children, footer, cl
               <X className="size-4" />
             </button>
           </header>
-          <div className="px-6 pb-5">{children}</div>
+          <div className="min-h-0 overflow-y-auto px-6 pb-5">{children}</div>
           {footer && (
-            <footer className="flex justify-end gap-2 border-t border-line bg-sunken/30 px-6 py-3.5 rounded-b-[var(--radius-card)]">
+            <footer className="flex shrink-0 justify-end gap-2 border-t border-line bg-sunken/30 px-6 py-3.5 rounded-b-[var(--radius-card)]">
               {footer}
             </footer>
           )}

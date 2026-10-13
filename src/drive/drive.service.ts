@@ -17,6 +17,9 @@ import {
   StorageQuotaView,
   toAccountRef,
   toFileView,
+  toTreeNode,
+  TREE_FIELDS,
+  TreeNode,
 } from './drive.types';
 import { CreateFolderDto, ListFilesQueryDto, UpdateFileDto } from './dto/drive.dto';
 import { IncomingFile } from './upload-stream.util';
@@ -113,31 +116,74 @@ export class DriveService {
       const name = segment.trim();
       if (!name) continue;
 
-      const existing = await this.run(ctx, 'files.list(folder lookup)', (drive) =>
-        drive.files.list({
-          q: [
-            `name = '${escapeQueryValue(name)}'`,
-            `'${escapeQueryValue(parentId)}' in parents`,
-            `mimeType = '${FOLDER_MIME_TYPE}'`,
-            'trashed = false',
-          ].join(' and '),
-          pageSize: 1,
-          fields: `files(${FILE_FIELDS})`,
-          supportsAllDrives: true,
-          includeItemsFromAllDrives: true,
-        }),
-      );
-
-      const found = existing.data.files?.[0];
-      const folder = found
-        ? toFileView(found, ctx.account)
-        : await this.createFolder(ctx, { name, parentId });
+      const folder =
+        (await this.findFolderByName(ctx, parentId, name)) ??
+        (await this.createFolder(ctx, { name, parentId }));
 
       created.push(folder);
       parentId = folder.id;
     }
 
     return created;
+  }
+
+  /** Carpeta (no en la papelera) con ese nombre exacto dentro de `parentId`. */
+  async findFolderByName(
+    ctx: DriveContext,
+    parentId: string,
+    name: string,
+  ): Promise<DriveFileView | null> {
+    const response = await this.run(ctx, 'files.list(folder lookup)', (drive) =>
+      drive.files.list({
+        q: [
+          `name = '${escapeQueryValue(name)}'`,
+          `'${escapeQueryValue(parentId)}' in parents`,
+          `mimeType = '${FOLDER_MIME_TYPE}'`,
+          'trashed = false',
+        ].join(' and '),
+        pageSize: 1,
+        fields: `files(${FILE_FIELDS})`,
+        supportsAllDrives: true,
+        includeItemsFromAllDrives: true,
+      }),
+    );
+    const found = response.data.files?.[0];
+    return found ? toFileView(found, ctx.account) : null;
+  }
+
+  /**
+   * TODOS los hijos directos de una carpeta, recorriendo la paginación.
+   * Incluye `ownedByMe`, que el listado normal no pide: decide si un archivo
+   * se puede borrar tras moverlo.
+   */
+  async listChildren(ctx: DriveContext, folderId: string): Promise<TreeNode[]> {
+    const nodes: TreeNode[] = [];
+    let pageToken: string | undefined;
+
+    do {
+      const response = await this.run(ctx, 'files.list(children)', (drive) =>
+        drive.files.list({
+          q: `'${escapeQueryValue(folderId)}' in parents and trashed = false`,
+          pageSize: 1000,
+          pageToken,
+          fields: `nextPageToken,files(${TREE_FIELDS})`,
+          supportsAllDrives: true,
+          includeItemsFromAllDrives: true,
+        }),
+      );
+      nodes.push(...(response.data.files ?? []).map(toTreeNode));
+      pageToken = response.data.nextPageToken ?? undefined;
+    } while (pageToken);
+
+    return nodes;
+  }
+
+  /** Metadatos de un elemento en la forma que usan los recorridos de árbol. */
+  async getTreeNode(ctx: DriveContext, fileId: string): Promise<TreeNode> {
+    const response = await this.run(ctx, 'files.get(tree)', (drive) =>
+      drive.files.get({ fileId, fields: TREE_FIELDS, supportsAllDrives: true }),
+    );
+    return toTreeNode(response.data);
   }
 
   /**

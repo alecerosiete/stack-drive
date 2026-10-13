@@ -190,6 +190,22 @@
   .tabular {
     font-variant-numeric: tabular-nums;
   }
+  /* Imagen de arrastre: tiene que estar en el DOM para que el navegador la
+     capture, pero fuera de la vista. */
+  .drag-ghost {
+    position: fixed;
+    top: -1000px;
+    left: 0;
+    max-width: 260px;
+    padding: 6px 12px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    border-radius: 10px;
+    background: var(--accent);
+    color: var(--accent-ink);
+    font: 500 13px var(--font-sans);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

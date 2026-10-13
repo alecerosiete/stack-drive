@@ -158,6 +158,10 @@ necesitas probar contra servicios reales, `docker compose up -d` primero.
 ## Lo que NO hay (todavía)
 
 Ver "Límites conocidos" en `README.md` — *resumable upload*, histórico de
-cuota (solo última foto), transferencia de carpetas completas y liberación
-inmediata de cuota tras vaciar la papelera. No asumas que existen al
-planificar un cambio relacionado.
+cuota (solo última foto) y desglose separado de Gmail y Fotos. No asumas que
+existen al planificar un cambio relacionado.
+
+Las transferencias de carpetas completas y de varios elementos viven en
+`drive/batch-transfer.service.ts` (job `batch` de la cola). Cada archivo pasa
+por `DriveAggregateService.transfer`, así que hereda la verificación antes de
+borrar; no dupliques esa lógica en el lote.

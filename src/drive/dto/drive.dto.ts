@@ -1,5 +1,8 @@
 import { Transform, Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
+  ArrayMinSize,
+  IsArray,
   IsBoolean,
   IsIn,
   IsInt,
@@ -225,4 +228,94 @@ export class RebalanceQueryDto {
   @Min(1)
   @Max(200)
   maxMoves?: number;
+}
+
+/** Un elemento de un lote: archivo o carpeta de la cuenta origen. */
+export class BatchItemDto {
+  @IsString()
+  @MaxLength(256)
+  id!: string;
+
+  /**
+   * Carpeta destino propia de este elemento. Solo la usa "reintentar
+   * fallidos": cada archivo fallido vuelve a la subcarpeta que le tocaba.
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(256)
+  parentId?: string;
+}
+
+export const CONFLICT_MODES = ['merge', 'rename'] as const;
+export type ConflictMode = (typeof CONFLICT_MODES)[number];
+
+/**
+ * Transferencia de varios elementos (archivos y/o carpetas completas) de una
+ * cuenta a otra en un solo trabajo.
+ */
+export class BatchTransferDto {
+  @IsUUID()
+  fromAccountId!: string;
+
+  @IsUUID()
+  toAccountId!: string;
+
+  /** Carpeta destino. Por defecto, la raíz de la cuenta destino. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(256)
+  parentId?: string;
+
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(500)
+  @ValidateNested({ each: true })
+  @Type(() => BatchItemDto)
+  items!: BatchItemDto[];
+
+  /** Mover: cada original se borra solo tras verificar su copia. */
+  @IsOptional()
+  @ToBoolean()
+  @IsBoolean()
+  deleteSource?: boolean;
+
+  @IsOptional()
+  @ToBoolean()
+  @IsBoolean()
+  permanentlyDeleteSource?: boolean;
+
+  /**
+   * Qué hacer si en el destino ya hay una carpeta con el mismo nombre:
+   * `merge` la reutiliza (por defecto), `rename` crea "Nombre (2)".
+   */
+  @IsOptional()
+  @IsIn(CONFLICT_MODES)
+  onConflict?: ConflictMode;
+
+  /** Nombre legible para el panel ("Facturas 2026", "5 elementos"). */
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  label?: string;
+}
+
+/** Qué implicaría transferir unos elementos, sin ejecutar nada. */
+export class TransferPreviewDto {
+  @IsUUID()
+  fromAccountId!: string;
+
+  @IsUUID()
+  toAccountId!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(256)
+  parentId?: string;
+
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(500)
+  @IsString({ each: true })
+  @MaxLength(256, { each: true })
+  ids!: string[];
 }

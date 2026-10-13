@@ -26,6 +26,8 @@ import { Menu } from '../../components/ui/Menu';
 import { Logo } from './Logo';
 import { CommandPalette } from './CommandPalette';
 import { UploadTray } from '../uploads/UploadTray';
+import { TransferDialog } from '../transfers/TransferDialog';
+import { dragSourceAccount, isItemsDrag, readItemsDrag, transferIntent } from '../transfers/transfer-intent';
 
 const NAV = [
   { to: '/', label: 'Resumen', icon: LayoutGrid, end: true },
@@ -47,6 +49,13 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const transfers = useTransfers();
   const running = transfers.data?.filter(isActiveJob).length ?? 0;
   const linked = accounts.data?.filter((a) => a.status !== 'REVOKED') ?? [];
+  const [dropTarget, setDropTarget] = useState<string | null>(null);
+
+  // Soltar archivos de una cuenta sobre otra de la pila abre el diálogo de
+  // transferencia con ese destino ya elegido. Una cuenta no acepta lo que
+  // viene de ella misma, ni puede recibir si necesita reautorizarse.
+  const accepts = (event: React.DragEvent, accountId: string, blocked: boolean) =>
+    !blocked && isItemsDrag(event) && dragSourceAccount(event) !== accountId.toLowerCase();
 
   return (
     <nav className="flex h-full flex-col gap-6 px-3 py-5" aria-label="Principal" onClick={(e) => (e.target as HTMLElement).closest('a') && onNavigate?.()}>
@@ -84,7 +93,25 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
               </li>
             ))}
           {linked.map((account) => (
-            <li key={account.id}>
+            <li
+              key={account.id}
+              onDragOver={(event) => {
+                if (!accepts(event, account.id, account.needsReauth)) return;
+                event.preventDefault();
+                event.dataTransfer.dropEffect = 'copy';
+                setDropTarget(account.id);
+              }}
+              onDragLeave={() => setDropTarget((current) => (current === account.id ? null : current))}
+              onDrop={(event) => {
+                setDropTarget(null);
+                const payload = readItemsDrag(event);
+                if (!payload || payload.accountId === account.id) return;
+                event.preventDefault();
+                transferIntent.open({ accountId: payload.accountId, items: payload.items, targetId: account.id });
+              }}
+              className={cn('rounded-lg transition-shadow', dropTarget === account.id && 'ring-2 ring-offset-2 ring-offset-surface')}
+              style={dropTarget === account.id ? ({ '--tw-ring-color': accountColor(account.id) } as React.CSSProperties) : undefined}
+            >
               <NavLink to={`/drive/${account.id}`} className={navClass} title={account.email}>
                 <span className="relative size-2.5 shrink-0 rounded-[3px]" style={{ background: accountColor(account.id) }} />
                 <span className="min-w-0 flex-1 truncate">{accountLabel(account)}</span>
@@ -218,6 +245,7 @@ export function AppShell() {
       </div>
 
       <UploadTray />
+      <TransferDialog />
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
     </div>
   );
