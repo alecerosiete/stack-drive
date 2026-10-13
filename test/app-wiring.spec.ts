@@ -18,6 +18,8 @@ import { AccountsController } from '../src/accounts/accounts.controller';
 import { AuthController } from '../src/auth/auth.controller';
 import { GoogleOAuthController } from '../src/google/google-oauth.controller';
 import { TransfersController } from '../src/jobs/transfers.controller';
+import { UploadSessionController } from '../src/drive/upload-session.controller';
+import { UploadSessionService } from '../src/drive/upload-session.service';
 
 /**
  * Verifica que todo el grafo de inyección de la aplicación se resuelve.
@@ -72,6 +74,7 @@ describe('AppModule (grafo de dependencias)', () => {
     ['GoogleOAuthService', GoogleOAuthService],
     ['GoogleTokenService', GoogleTokenService],
     ['TransferJobsService', TransferJobsService],
+    ['UploadSessionService', UploadSessionService],
   ])('resuelve %s con todas sus dependencias', (_name, token) => {
     expect(moduleRef.get(token as never)).toBeDefined();
   });
@@ -83,6 +86,7 @@ describe('AppModule (grafo de dependencias)', () => {
     ['DriveAggregateController', DriveAggregateController],
     ['DriveController', DriveController],
     ['TransfersController', TransfersController],
+    ['UploadSessionController', UploadSessionController],
   ])('instancia %s', (_name, token) => {
     expect(moduleRef.get(token as never)).toBeDefined();
   });

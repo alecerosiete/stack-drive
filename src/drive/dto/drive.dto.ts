@@ -124,6 +124,29 @@ export class UploadQueryDto {
   name?: string;
 }
 
+export class CreateUploadSessionDto {
+  @IsString()
+  @MinLength(1)
+  @MaxLength(255)
+  name!: string;
+
+  /** Tamaño exacto en bytes: Google lo exige al abrir la sesión. */
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  size!: number;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  mimeType?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(256)
+  parentId?: string;
+}
+
 export class SearchQueryDto {
   @IsString()
   @MinLength(1)

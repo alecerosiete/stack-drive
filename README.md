@@ -185,6 +185,10 @@ en el panel.
 | `GET` | `/files/:fileId/link` | `webViewLink`, `webContentLink` y ruta de proxy. |
 | `GET` | `/files/:fileId/download` | Descarga en streaming (exporta los Docs nativos). |
 | `POST` | `/files?parentId=&name=` | **Sube** por streaming (multipart o cuerpo binario). |
+| `POST` | `/uploads` | Abre una **subida reanudable** (`name`, `size`, `mimeType?`, `parentId?`) → `{ id, offset, chunkSize }`. |
+| `PUT` | `/uploads/:uploadId` | Un bloque, `application/octet-stream` con `Content-Range: bytes inicio-fin/total` → `{ offset }`, o `{ file }` con el último. |
+| `GET` | `/uploads/:uploadId` | Tras un corte: cuántos bytes confirmó Google (`offset`), o el archivo si ya terminó. |
+| `DELETE` | `/uploads/:uploadId` | Cancela la subida y libera lo ya subido. |
 | `POST` | `/folders` | Crea una carpeta. |
 | `POST` | `/folders/path` | Crea una ruta completa (`informes/2026/Q1`) reutilizando lo que exista. |
 | `PATCH` | `/files/:fileId` | Renombra y/o mueve (`name`, `parentId`, `trashed`). |
@@ -350,14 +354,19 @@ Cubren las piezas donde un error es caro y silencioso:
   Google son reutilizables en paralelo); el coste es algún refresco extra tras
   un despliegue. Si llega a importar, el punto donde sustituirla por Redis está
   aislado en `GoogleTokenService`.
-- **Solo las transferencias entre cuentas son reanudables.** Copian con el
-  protocolo *resumable* de Google: si la conexión se corta, se pregunta a
-  Google cuántos bytes confirmó y se vuelve a pedir el origen desde ahí
-  (`Range`), sin repetir lo ya subido (`drive/resumable-upload.ts`). Las
-  subidas desde el navegador siguen siendo multipart: su stream no se puede
-  volver a pedir, así que reanudarlas exigiría que el propio cliente lleve la
-  sesión. Los documentos de Google tampoco se reanudan: se exportan sin
-  tamaño conocido, aunque son pequeños.
+- **Las subidas y transferencias grandes se reanudan; las pequeñas, no.**
+  Las transferencias entre cuentas usan el protocolo *resumable* de Google y,
+  tras un corte, vuelven a pedir el origen desde el último byte confirmado
+  (`drive/resumable-upload.ts`). Desde el navegador, los archivos de más de
+  8 MiB van por bloques (`/drive/:accountId/uploads`): tras un corte el panel
+  pregunta por dónde va y sigue, y tras recargar la página basta con volver a
+  elegir el mismo archivo. La URL de la sesión de Google nunca sale del
+  servidor. Los archivos pequeños y los documentos de Google (que se exportan
+  sin tamaño conocido) siguen yendo en una sola petición: repetirlos cuesta
+  poco.
+- **El servidor no limita bloques en paralelo de una misma subida.** El
+  protocolo de Google exige enviarlos en orden; el panel lo hace, y un
+  cliente propio debe hacer lo mismo.
 - **Las transferencias de carpetas se recorren en el servidor.** Una carpeta
   con decenas de miles de archivos tarda en analizarse antes de empezar, y la
   vista previa deja de contar a los 5000 archivos (avisa de que es un mínimo).

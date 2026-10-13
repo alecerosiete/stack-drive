@@ -10,7 +10,7 @@ const UPLOAD_URL = 'https://www.googleapis.com/upload/drive/v3/files';
 export interface UploadHttp {
   request<T = unknown>(options: {
     url: string;
-    method: 'POST' | 'PUT';
+    method: 'POST' | 'PUT' | 'DELETE';
     params?: Record<string, string | boolean>;
     headers?: Record<string, string>;
     data?: unknown;
@@ -24,13 +24,17 @@ export interface UploadHttp {
   }>;
 }
 
-export interface ResumableUploadParams {
+/** Lo que Google necesita para abrir una sesión de subida. */
+export interface UploadTarget {
   name: string;
   mimeType: string;
   parentId: string;
   /** Tamaño exacto: el protocolo lo exige para saber cuándo está completo. */
   size: number;
   fields: string;
+}
+
+export interface ResumableUploadParams extends UploadTarget {
   /**
    * Cliente autorizado de la cuenta destino. Se pide de nuevo antes de cada
    * reanudación: una subida de varios GB puede durar más que el access_token
@@ -47,7 +51,7 @@ export interface ResumableUploadParams {
 }
 
 /** Estado de la sesión según Google: terminada, o cuántos bytes confirmó. */
-type SessionStatus = { file: drive_v3.Schema$File } | { offset: number };
+export type SessionStatus = { file: drive_v3.Schema$File } | { offset: number };
 
 /**
  * Sube un archivo con el protocolo *resumable* de la Drive API y, si la
@@ -107,7 +111,7 @@ export async function resumableUpload(
   }
 }
 
-async function startSession(http: UploadHttp, params: ResumableUploadParams): Promise<string> {
+export async function startSession(http: UploadHttp, params: UploadTarget): Promise<string> {
   const response = await http.request({
     url: UPLOAD_URL,
     method: 'POST',
@@ -165,7 +169,7 @@ async function send(
 }
 
 /** Pregunta a Google cuántos bytes tiene de la sesión (PUT vacío). */
-async function querySession(
+export async function querySession(
   http: UploadHttp,
   sessionUrl: string,
   size: number,
@@ -178,6 +182,56 @@ async function querySession(
     // 308 "Resume Incomplete" es la respuesta normal mientras falten bytes.
     validateStatus: (status) => status === 308 || (status >= 200 && status < 300),
   });
+  return toStatus(response);
+}
+
+/**
+ * Envía un bloque `[start, end]` (inclusivos) de la sesión. A diferencia de
+ * `resumableUpload`, quien llama no puede volver a abrir el origen: el bloque
+ * viene del navegador, así que un corte no se reintenta aquí, se devuelve y
+ * el cliente reenvía desde lo que Google confirme (`querySession`).
+ *
+ * Google exige que todo bloque salvo el último mida un múltiplo de 256 KiB;
+ * se valida antes de llegar aquí.
+ */
+export async function sendChunk(
+  http: UploadHttp,
+  sessionUrl: string,
+  range: { start: number; end: number; size: number },
+  body: Readable,
+): Promise<SessionStatus> {
+  const response = await http.request<drive_v3.Schema$File>({
+    url: sessionUrl,
+    method: 'PUT',
+    headers: {
+      'Content-Length': String(range.end - range.start + 1),
+      'Content-Range': `bytes ${range.start}-${range.end}/${range.size}`,
+    },
+    data: body,
+    responseType: 'json',
+    timeout: 0,
+    validateStatus: (status) => status === 308 || (status >= 200 && status < 300),
+  });
+  return toStatus(response);
+}
+
+/**
+ * Cancela la sesión en Google. Responde 499 si la cancela y 404 si ya no
+ * existía; ambos significan lo mismo para quien llama.
+ */
+export async function cancelSession(http: UploadHttp, sessionUrl: string): Promise<void> {
+  await http.request({
+    url: sessionUrl,
+    method: 'DELETE',
+    validateStatus: (status) => status === 499 || status === 404 || (status >= 200 && status < 300),
+  });
+}
+
+function toStatus(response: {
+  status: number;
+  data: drive_v3.Schema$File;
+  headers: { get(name: string): string | null };
+}): SessionStatus {
   if (response.status !== 308) return { file: response.data };
 
   // `Range: bytes=0-N` → confirmados N+1 bytes. Sin cabecera, ninguno.
@@ -192,7 +246,7 @@ async function querySession(
  * (duran una semana) y cualquier otro 4xx (cuota llena, permisos) no lo
  * arregla reintentar.
  */
-function isResumable(error: unknown): boolean {
+export function isResumable(error: unknown): boolean {
   const { status } = normalizeGoogleError(error);
   return status === undefined || status === 401 || isRetryableGoogleError(error);
 }
