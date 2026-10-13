@@ -15,8 +15,8 @@ orquestación (credenciales, listados, subidas, movimientos y vista agregada).
 
 ```
 ┌──────────────┐
-│  web/ (panel │  Authorization: Bearer <JWT de StackDrive>
-│  de prueba)  │
+│  frontend/   │  Authorization: Bearer <JWT de StackDrive>
+│  (panel web) │
 └──────┬───────┘
        │
 ┌──────▼─────────────────────────────────────────────────────────────┐
@@ -120,24 +120,25 @@ npx prisma migrate deploy   # aplica prisma/migrations/0_init
 npm run start:dev
 ```
 
-### Paso 4 — Panel web mínimo (opcional, para probar sin curl)
+### Paso 4 — Panel web (opcional, para probar sin curl)
 
 ```bash
-npm run web                 # sirve web/ en http://localhost:5173
+cd frontend
+cp .env.example .env        # VITE_API_URL=http://localhost:3000
+npm install
+npm run dev                 # http://localhost:5173
 ```
 
-Es HTML/CSS/JS plano, sin build ni dependencias (`web/serve.js` es un
-servidor estático de unas pocas líneas). Cubre el flujo completo: registro/
-login, vincular varias cuentas de Google (abre el consentimiento en una
-pestaña nueva y detecta la vuelta por los parámetros que deja
-`/google/callback`), explorar/subir/descargar/mover archivos de una cuenta,
-vista agregada de cuota y búsqueda, plan de redistribución con botón
-"Ejecutar" por movimiento, y seguimiento de transferencias en cola. El JWT se
-guarda en `localStorage` del navegador por comodidad de desarrollo — no es un
-panel pensado para producción, solo para ejercitar la API de principio a fin.
+App de React + Vite en `frontend/`. Cubre el flujo completo: registro/login,
+vincular varias cuentas de Google, explorar/subir/descargar/mover archivos,
+transferir archivos y carpetas entre cuentas (con vista previa y arrastrando
+a otra cuenta de la barra lateral), vista agregada de cuota y búsqueda, plan
+de redistribución y seguimiento de transferencias en cola. Los tokens se
+guardan en `localStorage` del navegador por comodidad de desarrollo.
 
-`POST_LINK_REDIRECT_URL` en `.env.example` ya apunta a `http://localhost:5173/`
-para que el callback de Google vuelva directo al panel.
+El puerto 5173 es fijo (`strictPort`) porque es el origen que
+`CORS_ORIGINS` y `POST_LINK_REDIRECT_URL` traen preconfigurado en
+`.env.example`, para que el callback de Google vuelva directo al panel.
 
 ---
 

@@ -10,7 +10,7 @@ ejecuta y qué convenciones seguir para que un cambio encaje sin fricción.
 StackDrive es un backend multi-tenant que centraliza **N cuentas de Google
 Drive por usuario** bajo una sola API, sin almacenar un solo byte de archivo
 en servidores propios: todo vive en la cuota gratuita de las cuentas de
-Google que cada usuario vincula. Incluye un panel web mínimo (`web/`) para
+Google que cada usuario vincula. Incluye un panel web (`frontend/`) para
 ejercitar el flujo completo sin herramientas externas.
 
 ## Stack
@@ -25,7 +25,7 @@ ejercitar el flujo completo sin herramientas externas.
 | Validación | `class-validator` / `class-transformer` | Todo DTO de entrada se valida; `ValidationPipe` global con `whitelist: true`. |
 | Auth de plataforma | JWT propio (`@nestjs/jwt`) + sesiones opacas revocables | Independiente de las credenciales de Google. |
 | Cifrado | AES-256-GCM nativo (`node:crypto`), sin librería externa | Cifra los `refresh_token` antes de tocar la base de datos. |
-| Panel de prueba | HTML/CSS/JS plano, sin build ni dependencias (`web/`) | Un servidor estático de 50 líneas (`web/serve.js`) basta; no es un producto, es un arnés de pruebas. |
+| Panel web | React 19 + Vite + Tailwind 4 + TanStack Query (`frontend/`) | Paquete npm independiente, con su propio `package.json`; habla con la API solo por HTTP (`VITE_API_URL`). |
 | Tests | Jest + `ts-jest` | Unitarios con dobles de `googleapis`/Prisma; sin tests contra la API real de Google. |
 
 ## Arrancar el entorno
@@ -36,7 +36,7 @@ docker compose up -d            # PostgreSQL + Redis
 npm install
 npx prisma migrate deploy
 npm run start:dev               # API en :3000
-npm run web                     # panel de prueba en :5173 (otra terminal)
+cd frontend && npm install && npm run dev   # panel en :5173 (otra terminal)
 ```
 
 Sin `.env` válido, `loadConfiguration()` lanza al arrancar — es intencional,
@@ -65,7 +65,7 @@ prisma/schema.prisma   Fuente de verdad del modelo de datos.
 test/app-wiring.spec.ts   Verifica que TODO el grafo de DI resuelve al
                           arrancar — es la red de seguridad contra un
                           provider mal scoped (ver nota de abajo).
-web/           Panel de prueba: index.html + app.js (vanilla) + serve.js.
+frontend/      Panel web (React + Vite): src/api (cliente y hooks), src/features/<dominio>.
 ```
 
 ## Invariantes que no se deben romper
@@ -142,6 +142,7 @@ ya se encontraron y corrigieron al construir el proyecto.
 npm test          # suite completa (Jest)
 npm run lint      # tsc --noEmit
 npm run build     # nest build
+cd frontend && npm run build   # tsc -b + vite build del panel
 ```
 
 Antes de dar un cambio por terminado en `google/`, `crypto/` o `jobs/`,
