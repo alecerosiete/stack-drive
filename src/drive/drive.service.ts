@@ -1,4 +1,4 @@
-import { BadRequestException, Inject, Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, HttpException, Inject, Injectable, Logger } from '@nestjs/common';
 import { drive_v3 } from 'googleapis';
 import { Readable } from 'node:stream';
 import { APP_CONFIG, AppConfiguration } from '../config/configuration';
@@ -22,6 +22,7 @@ import {
   TreeNode,
 } from './drive.types';
 import { CreateFolderDto, ListFilesQueryDto, UpdateFileDto } from './dto/drive.dto';
+import { resumableUpload } from './resumable-upload';
 import { IncomingFile } from './upload-stream.util';
 
 interface RunOptions {
@@ -224,6 +225,70 @@ export class DriveService {
   }
 
   /**
+   * Sube un archivo cuyo origen se puede volver a abrir desde cualquier byte
+   * (otra cuenta de Google), con el protocolo *resumable*: si la conexión se
+   * corta a mitad, continúa desde lo que Google ya confirmó en vez de repetir
+   * la subida entera. Ver `resumable-upload.ts`.
+   */
+  async uploadResumable(
+    ctx: DriveContext,
+    file: { name: string; mimeType: string; size: number },
+    openSource: (offset: number) => Promise<Readable>,
+    options: { parentId?: string },
+  ): Promise<DriveFileView> {
+    try {
+      const uploaded = await resumableUpload({
+        ...file,
+        parentId: options.parentId ?? 'root',
+        fields: FILE_FIELDS,
+        authorize: async ({ stale }) => {
+          if (stale) this.clients.invalidateToken(ctx.account.id);
+          return (await this.clients.forResolvedAccount(ctx.account)).auth;
+        },
+        openSource,
+        maxResumes: this.config.drive.maxRetries,
+        baseDelayMs: this.config.drive.retryBaseDelayMs,
+        logger: this.logger,
+      });
+      this.logger.log(`Subido "${uploaded.name}" (${uploaded.id}) a ${ctx.account.email}`);
+      return toFileView(uploaded, ctx.account);
+    } catch (error) {
+      if (error instanceof HttpException) throw error;
+      const { status, message } = normalizeGoogleError(error);
+      throw new GoogleApiException('upload(resumable)', status, message);
+    }
+  }
+
+  /**
+   * Abre los bytes de un archivo binario a partir de `offset`. Sirve para
+   * reanudar una transferencia sin volver a descargar lo ya subido.
+   */
+  async openMedia(ctx: DriveContext, fileId: string, offset = 0): Promise<Readable> {
+    const response = await this.run(ctx, 'files.get(media)', (drive) =>
+      drive.files.get(
+        { fileId, alt: 'media', supportsAllDrives: true },
+        {
+          responseType: 'stream',
+          timeout: 0,
+          headers: offset > 0 ? { Range: `bytes=${offset}-` } : undefined,
+        },
+      ),
+    );
+    const stream = response.data as unknown as Readable;
+    // Si Google ignorase el Range devolvería el archivo entero (200), y
+    // concatenarlo tras lo ya subido corrompería la copia en silencio.
+    if (offset > 0 && response.status !== 206) {
+      stream.destroy();
+      throw new GoogleApiException(
+        'files.get(media)',
+        response.status,
+        `Se pidió el archivo desde el byte ${offset} y Google devolvió ${response.status}, no 206`,
+      );
+    }
+    return stream;
+  }
+
+  /**
    * Duplica un archivo dentro de la MISMA cuenta. Lo hace Google de su lado:
    * los bytes no viajan por nuestra red.
    */
@@ -354,15 +419,8 @@ export class DriveService {
       };
     }
 
-    const response = await this.run(ctx, 'files.get(media)', (drive) =>
-      drive.files.get(
-        { fileId, alt: 'media', supportsAllDrives: true },
-        { responseType: 'stream', timeout: 0 },
-      ),
-    );
-
     return {
-      stream: response.data as unknown as Readable,
+      stream: await this.openMedia(ctx, fileId),
       filename: meta.name,
       mimeType: meta.mimeType,
       size: meta.size,

@@ -151,25 +151,12 @@ export class DriveAggregateService {
       );
     }
 
-    const download = await this.drive.download(source, dto.from.fileId);
-
-    // Los bytes bajan de la cuenta origen y suben a la destino sin pasar por
-    // disco; el contador intermedio solo observa el caudal para informar del
-    // progreso, no acumula nada.
-    const body =
-      options.onProgress && meta.size
-        ? trackProgress(download.stream, meta.size, options.onProgress)
-        : download.stream;
-
-    const uploaded = await this.drive.uploadFile(
-      target,
-      {
-        stream: body,
-        filename: dto.to.name?.trim() || download.filename,
-        mimeType: download.mimeType,
-      },
-      { parentId: dto.to.parentId },
-    );
+    // Un archivo binario se puede volver a pedir desde cualquier byte, así que
+    // un corte a mitad se reanuda en vez de repetir la subida entera.
+    const size = native ? null : meta.size;
+    const uploaded = size
+      ? await this.uploadBinary(source, target, dto, { ...meta, size }, options)
+      : await this.uploadExport(source, target, dto, meta.size, options);
 
     // Preferimos md5 (detecta corrupción); el tamaño es el respaldo cuando
     // Google no publica checksum para ese archivo.
@@ -218,6 +205,63 @@ export class DriveAggregateService {
       sourceDeleted,
       durationMs: Date.now() - startedAt,
     };
+  }
+
+  /** Subida reanudable: ver `DriveService.uploadResumable`. */
+  private uploadBinary(
+    source: DriveContext,
+    target: DriveContext,
+    dto: TransferDto,
+    meta: { name: string; mimeType: string; size: number },
+    options: TransferOptions,
+  ) {
+    return this.drive.uploadResumable(
+      target,
+      { name: dto.to.name?.trim() || meta.name, mimeType: meta.mimeType, size: meta.size },
+      async (offset) => {
+        // Cada apertura resuelve de nuevo el cliente del origen: en una
+        // transferencia larga, el token con el que empezó puede caducar.
+        const fresh = await this.clients.forResolvedAccount(source.account);
+        const stream = await this.drive.openMedia(fresh, dto.from.fileId, offset);
+        return options.onProgress
+          ? trackProgress(stream, meta.size, options.onProgress, offset)
+          : stream;
+      },
+      { parentId: dto.to.parentId },
+    );
+  }
+
+  /**
+   * Camino de los documentos de Google (y de los archivos vacíos): se
+   * exportan sin tamaño conocido, así que no hay forma de reanudar y van en
+   * una sola subida multipart. Son pequeños, así que repetirlos cuesta poco.
+   */
+  private async uploadExport(
+    source: DriveContext,
+    target: DriveContext,
+    dto: TransferDto,
+    size: number | null,
+    options: TransferOptions,
+  ) {
+    const download = await this.drive.download(source, dto.from.fileId);
+
+    // Los bytes bajan de la cuenta origen y suben a la destino sin pasar por
+    // disco; el contador intermedio solo observa el caudal para informar del
+    // progreso, no acumula nada.
+    const body =
+      options.onProgress && size
+        ? trackProgress(download.stream, size, options.onProgress)
+        : download.stream;
+
+    return this.drive.uploadFile(
+      target,
+      {
+        stream: body,
+        filename: dto.to.name?.trim() || download.filename,
+        mimeType: download.mimeType,
+      },
+      { parentId: dto.to.parentId },
+    );
   }
 
   /**
@@ -512,9 +556,11 @@ function trackProgress(
   source: Readable,
   totalBytes: number,
   onProgress: (percent: number, bytesTransferred: number) => void,
+  /** Al reanudar, los bytes que ya estaban subidos. */
+  startAt = 0,
 ): Readable {
-  let transferred = 0;
-  let lastReported = 0;
+  let transferred = startAt;
+  let lastReported = Math.floor((startAt / totalBytes) * 100);
 
   const counter = new Transform({
     transform(chunk: Buffer, _encoding, callback) {

@@ -343,10 +343,14 @@ Cubren las piezas donde un error es caro y silencioso:
   Google son reutilizables en paralelo); el coste es algún refresco extra tras
   un despliegue. Si llega a importar, el punto donde sustituirla por Redis está
   aislado en `GoogleTokenService`.
-- **Las subidas usan multipart, no *resumable upload*.** Si se corta la
-  conexión a mitad hay que repetir la subida completa. Para archivos de varios
-  GB en redes inestables, el siguiente paso es el protocolo *resumable* de
-  Google.
+- **Solo las transferencias entre cuentas son reanudables.** Copian con el
+  protocolo *resumable* de Google: si la conexión se corta, se pregunta a
+  Google cuántos bytes confirmó y se vuelve a pedir el origen desde ahí
+  (`Range`), sin repetir lo ya subido (`drive/resumable-upload.ts`). Las
+  subidas desde el navegador siguen siendo multipart: su stream no se puede
+  volver a pedir, así que reanudarlas exigiría que el propio cliente lleve la
+  sesión. Los documentos de Google tampoco se reanudan: se exportan sin
+  tamaño conocido, aunque son pequeños.
 - **Las transferencias de carpetas se recorren en el servidor.** Una carpeta
   con decenas de miles de archivos tarda en analizarse antes de empezar, y la
   vista previa deja de contar a los 5000 archivos (avisa de que es un mínimo).
