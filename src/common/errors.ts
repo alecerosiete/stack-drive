@@ -8,6 +8,9 @@ export const ErrorCode = {
   GOOGLE_API_ERROR: 'GOOGLE_API_ERROR',
   INSUFFICIENT_SCOPE: 'GOOGLE_INSUFFICIENT_SCOPE',
   UPLOAD_FAILED: 'UPLOAD_FAILED',
+  UPLOAD_SESSION_NOT_FOUND: 'UPLOAD_SESSION_NOT_FOUND',
+  UPLOAD_SESSION_EXPIRED: 'UPLOAD_SESSION_EXPIRED',
+  UPLOAD_INTERRUPTED: 'UPLOAD_INTERRUPTED',
   INVALID_OAUTH_STATE: 'INVALID_OAUTH_STATE',
 } as const;
 
@@ -101,6 +104,50 @@ export class GoogleApiException extends HttpException {
         detail,
       },
       status,
+    );
+  }
+}
+
+/**
+ * La sesión de subida no existe o no es de esa cuenta. Igual que con las
+ * cuentas, no se distingue entre ambos casos.
+ */
+export class UploadSessionNotFoundException extends HttpException {
+  constructor(uploadId: string) {
+    super(
+      { code: ErrorCode.UPLOAD_SESSION_NOT_FOUND, message: `La subida ${uploadId} no existe` },
+      HttpStatus.NOT_FOUND,
+    );
+  }
+}
+
+/** Google descartó la sesión (caducó a la semana): hay que empezar de cero. */
+export class UploadSessionExpiredException extends HttpException {
+  constructor(uploadId: string) {
+    super(
+      {
+        code: ErrorCode.UPLOAD_SESSION_EXPIRED,
+        message: `La subida ${uploadId} caducó en Google; hay que volver a empezarla`,
+      },
+      HttpStatus.GONE,
+    );
+  }
+}
+
+/**
+ * Un bloque no llegó entero a Google (corte de red en cualquiera de los dos
+ * tramos). No es definitivo: el cliente consulta el estado y reenvía desde
+ * lo que Google confirmó.
+ */
+export class UploadInterruptedException extends HttpException {
+  constructor(uploadId: string, detail: string) {
+    super(
+      {
+        code: ErrorCode.UPLOAD_INTERRUPTED,
+        message: `El bloque de la subida ${uploadId} no llegó entero; consulta el estado y reanuda`,
+        detail,
+      },
+      HttpStatus.BAD_GATEWAY,
     );
   }
 }

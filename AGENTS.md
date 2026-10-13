@@ -157,10 +157,14 @@ necesitas probar contra servicios reales, `docker compose up -d` primero.
 
 ## Lo que NO hay (todavía)
 
-Ver "Límites conocidos" en `README.md` — *resumable upload* desde el
-navegador (solo las transferencias entre cuentas son reanudables) y desglose
-separado de Gmail y Fotos. No asumas que existen al planificar un cambio
-relacionado.
+Ver "Límites conocidos" en `README.md` — sobre todo, el desglose separado
+de Gmail y Fotos. No asumas que existe al planificar un cambio relacionado.
+
+Las subidas reanudables desde el navegador (`drive/upload-session.*`) llevan
+la cuenta de por dónde van en el CLIENTE: el servidor solo reenvía cada
+bloque en streaming y guarda la URL de la sesión de Google, que no debe salir
+nunca por la API (es una credencial de esa subida). No las conviertas en un
+bucle de reintentos en el servidor: el cuerpo de un `PUT` solo se lee una vez.
 
 El histórico de cuota (`quota_samples`, `GET /drive/quota/history`) solo se
 llena si el vigía está activo (`QUOTA_WATCH_ENABLED`): lo escribe

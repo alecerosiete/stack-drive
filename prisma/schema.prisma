@@ -70,8 +70,9 @@ model GoogleAccount {
 
   /// Misma cuenta de Google no puede vincularse dos veces al mismo tenant,
   /// pero sí puede estar vinculada por tenants distintos.
-  quotaSnapshot QuotaSnapshot?
-  quotaSamples  QuotaSample[]
+  quotaSnapshot  QuotaSnapshot?
+  quotaSamples   QuotaSample[]
+  uploadSessions UploadSession[]
 
   @@unique([userId, googleUserId])
   @@index([userId, status])
@@ -114,6 +115,32 @@ model QuotaSample {
 
   @@index([accountId, capturedAt])
   @@map("quota_samples")
+}
+
+/// Subida reanudable desde el navegador, en curso.
+///
+/// La URL de la sesión de Google se queda en el servidor: el navegador solo
+/// conoce el `id` y envía los bloques a la API, que los reenvía a Google. Esa
+/// URL autoriza por sí sola a escribir en ESA subida (no da acceso al resto de
+/// la cuenta) y caduca a la semana, por eso no se cifra como el refresh_token.
+model UploadSession {
+  id         String        @id @default(uuid()) @db.Uuid
+  /// La pertenencia al tenant se hereda de la cuenta, que ya se resuelve
+  /// filtrando por `userId` en cada petición.
+  accountId  String        @db.Uuid
+  account    GoogleAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  sessionUrl String
+  name       String
+  mimeType   String
+  parentId   String
+  size       BigInt
+  createdAt  DateTime      @default(now())
+  /// Google descarta las sesiones sin terminar a la semana.
+  expiresAt  DateTime
+
+  @@index([accountId])
+  @@index([expiresAt])
+  @@map("upload_sessions")
 }
 
 /// Estado anti-CSRF de un solo uso para el flujo de vinculación OAuth.
