@@ -27,11 +27,12 @@ export function RebalancePage() {
   const enqueue = useEnqueueTransfer();
   const [queued, setQueued] = useState<Set<string>>(new Set());
   const [confirmAll, setConfirmAll] = useState(false);
+  const [permanent, setPermanent] = useState(false);
 
   const run = async (moves: PlannedMove[]) => {
     for (const move of moves) {
       try {
-        await enqueue.mutateAsync({ from: { accountId: move.from.id, fileId: move.file.id }, to: { accountId: move.to.id }, deleteSource: true, fileName: move.file.name });
+        await enqueue.mutateAsync({ from: { accountId: move.from.id, fileId: move.file.id }, to: { accountId: move.to.id }, deleteSource: true, permanentlyDeleteSource: permanent, fileName: move.file.name });
         setQueued((prev) => new Set(prev).add(moveKey(move)));
       } catch (error) {
         toast.error(`«${move.file.name}»: ${(error as Error).message}`);
@@ -63,6 +64,13 @@ export function RebalancePage() {
             onKeyUp={() => setApplied(threshold)}
             className="accent-[var(--accent)]"
           />
+        </label>
+        <label className="flex max-w-72 cursor-pointer items-start gap-2.5 text-sm">
+          <input type="checkbox" checked={permanent} onChange={(e) => setPermanent(e.target.checked)} className="mt-0.5 size-4 accent-[var(--danger)]" />
+          <span>
+            Liberar el espacio al instante
+            <span className="block text-xs text-muted">Borra los originales para siempre tras verificar cada copia, sin pasar por la papelera.</span>
+          </span>
         </label>
         {plan.data && (
           <dl className="flex gap-8 text-sm">
@@ -164,15 +172,20 @@ export function RebalancePage() {
         onClose={() => setConfirmAll(false)}
         title={`¿Mover ${pending.length} archivo${pending.length === 1 ? '' : 's'}?`}
         confirmLabel="Ejecutar"
+        danger={permanent}
         loading={enqueue.isPending}
         onConfirm={() => {
           void run(pending).then(() => {
             setConfirmAll(false);
-            toast.success('Movimientos en cola', { description: 'Cada copia se verifica antes de enviar el original a la papelera.' });
+            toast.success('Movimientos en cola', {
+              description: permanent ? 'Cada copia se verifica antes de borrar el original.' : 'Cada copia se verifica antes de enviar el original a la papelera.',
+            });
           });
         }}
       >
-        Cada archivo se copia a la cuenta destino, se verifica la copia y solo entonces el original va a la papelera de la cuenta de origen. Recuerda que la papelera sigue ocupando cuota hasta que la vacíes.
+        {permanent
+          ? 'Cada archivo se copia a la cuenta destino, se verifica la copia y solo entonces el original se borra para siempre de la cuenta de origen. No se puede deshacer.'
+          : 'Cada archivo se copia a la cuenta destino, se verifica la copia y solo entonces el original va a la papelera de la cuenta de origen. Recuerda que la papelera sigue ocupando cuota hasta que la vacíes.'}
       </ConfirmDialog>
     </Page>
   );

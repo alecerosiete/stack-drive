@@ -15,8 +15,8 @@ orquestación (credenciales, listados, subidas, movimientos y vista agregada).
 
 ```
 ┌──────────────┐
-│  web/ (panel │  Authorization: Bearer <JWT de StackDrive>
-│  de prueba)  │
+│  frontend/   │  Authorization: Bearer <JWT de StackDrive>
+│  (panel web) │
 └──────┬───────┘
        │
 ┌──────▼─────────────────────────────────────────────────────────────┐
@@ -120,24 +120,25 @@ npx prisma migrate deploy   # aplica prisma/migrations/0_init
 npm run start:dev
 ```
 
-### Paso 4 — Panel web mínimo (opcional, para probar sin curl)
+### Paso 4 — Panel web (opcional, para probar sin curl)
 
 ```bash
-npm run web                 # sirve web/ en http://localhost:5173
+cd frontend
+cp .env.example .env        # VITE_API_URL=http://localhost:3000
+npm install
+npm run dev                 # http://localhost:5173
 ```
 
-Es HTML/CSS/JS plano, sin build ni dependencias (`web/serve.js` es un
-servidor estático de unas pocas líneas). Cubre el flujo completo: registro/
-login, vincular varias cuentas de Google (abre el consentimiento en una
-pestaña nueva y detecta la vuelta por los parámetros que deja
-`/google/callback`), explorar/subir/descargar/mover archivos de una cuenta,
-vista agregada de cuota y búsqueda, plan de redistribución con botón
-"Ejecutar" por movimiento, y seguimiento de transferencias en cola. El JWT se
-guarda en `localStorage` del navegador por comodidad de desarrollo — no es un
-panel pensado para producción, solo para ejercitar la API de principio a fin.
+App de React + Vite en `frontend/`. Cubre el flujo completo: registro/login,
+vincular varias cuentas de Google, explorar/subir/descargar/mover archivos,
+transferir archivos y carpetas entre cuentas (con vista previa y arrastrando
+a otra cuenta de la barra lateral), vista agregada de cuota y búsqueda, plan
+de redistribución y seguimiento de transferencias en cola. Los tokens se
+guardan en `localStorage` del navegador por comodidad de desarrollo.
 
-`POST_LINK_REDIRECT_URL` en `.env.example` ya apunta a `http://localhost:5173/`
-para que el callback de Google vuelva directo al panel.
+El puerto 5173 es fijo (`strictPort`) porque es el origen que
+`CORS_ORIGINS` y `POST_LINK_REDIRECT_URL` traen preconfigurado en
+`.env.example`, para que el callback de Google vuelva directo al panel.
 
 ---
 
@@ -188,7 +189,8 @@ en el panel.
 | `POST` | `/folders/path` | Crea una ruta completa (`informes/2026/Q1`) reutilizando lo que exista. |
 | `PATCH` | `/files/:fileId` | Renombra y/o mueve (`name`, `parentId`, `trashed`). |
 | `DELETE` | `/files/:fileId?permanent=` | Papelera (por defecto) o borrado definitivo. |
-| `GET` | `/quota` | Cuota de esa cuenta. |
+| `GET` | `/quota` | Cuota de esa cuenta, con el desglose Drive / papelera / Gmail + Fotos (`usageOutsideDrive`). |
+| `DELETE` | `/trash` | **Vacía la papelera** de esa cuenta (irreversible) → `{ freedBytes }`. |
 
 ### Drive — vista unificada de todas las cuentas
 
@@ -199,6 +201,8 @@ en el panel.
 | `GET` | `/drive/quota` | Cuota por cuenta, totales y cuenta recomendada para subir. |
 | `GET` | `/drive/rebalance/plan?threshold=` | **Propone** redistribuir (no ejecuta nada). |
 | `POST` | `/drive/transfers` | Encola una transferencia entre dos cuentas → `202 {jobId}`. |
+| `POST` | `/drive/transfers/preview` | Qué supondría transferir unos elementos: archivos, bytes, documentos de Google, conflictos de nombre y si cabe. No ejecuta nada. |
+| `POST` | `/drive/transfers/batch` | Encola un **lote**: varios archivos y/o carpetas completas → `202 {jobId}`. |
 | `GET` | `/drive/transfers/:jobId` | Progreso y resultado. |
 
 Los endpoints agregados son **tolerantes a fallos parciales**: devuelven
@@ -241,7 +245,8 @@ El sistema **nunca mueve archivos por decisión propia**. El flujo es:
    archivos propone mover (los más grandes primero), a qué cuenta destino y
    cuántos bytes liberaría. **No ejecuta nada.**
 2. El panel muestra el plan y el usuario aprueba los movimientos que quiera.
-3. Por cada uno, `POST /drive/transfers` con `deleteSource: true`.
+3. Por cada uno, `POST /drive/transfers` con `deleteSource: true` (y, si el
+   usuario quiere liberar la cuota al instante, `permanentlyDeleteSource: true`).
 
 Entre cuentas de Google distintas no existe un `move` nativo (son usuarios
 diferentes), así que una transferencia es copiar y luego borrar. El borrado del
@@ -250,12 +255,36 @@ original tiene tres salvaguardas:
 - Se **verifica la integridad** de la copia (md5, o tamaño si Google no publica
   checksum) **antes** de tocar el original. Si no se puede verificar, la copia
   se queda y el original no se toca.
-- El original va a la **papelera**, nunca a borrado permanente: el usuario
-  conserva 30 días para deshacer.
+- Por defecto el original va a la **papelera**: el usuario conserva 30 días
+  para deshacer. Solo con `permanentlyDeleteSource: true`, que el usuario
+  activa explícitamente, se borra para siempre (tras la misma verificación).
 - Los **documentos nativos de Google** (Docs, Sheets, Slides) se pueden copiar
   pero no mover: la copia es una conversión a `.docx`/`.xlsx`, no un duplicado
   idéntico, así que no es verificable y borrar el original destruiría el único
   ejemplar del documento vivo.
+
+### Transferir carpetas y varios elementos a la vez
+
+`POST /drive/transfers/batch` acepta archivos y carpetas mezclados. El trabajo
+recorre cada carpeta, recrea su estructura en el destino y transfiere archivo
+por archivo con las mismas salvaguardas de arriba. Además:
+
+- **Fallos parciales**: un archivo que falla no detiene el lote. Cada resultado
+  guarda su carpeta destino (`targetParentId`), así que el panel puede
+  reintentar solo los fallidos.
+- **Carpeta de origen**: al mover, solo se borra si al final queda vacía (se
+  vuelve a comprobar el origen antes de borrarla).
+- **Conflictos de nombre**: `onConflict: "merge"` (por defecto) reutiliza la
+  carpeta que ya exista en el destino y no vuelve a subir los archivos con el
+  mismo md5, ni los documentos de Google cuya copia convertida («Acta.docx»)
+  sea posterior a su última edición; `"rename"` crea «Nombre (2)».
+- **Se saltan** los accesos directos, los documentos de Google sin formato
+  exportable y, al mover, los archivos de otros propietarios (no ocupan tu
+  cuota y no se pueden borrar).
+
+`POST /drive/transfers/preview` devuelve lo mismo que verá el usuario antes de
+confirmar: número de archivos y carpetas, bytes, documentos de Google,
+conflictos y si cabe en el destino.
 
 El plan reserva el mismo margen en la cuenta destino: llenar otra cuenta al
 100 % solo trasladaría el problema.
@@ -318,8 +347,14 @@ Cubren las piezas donde un error es caro y silencioso:
   conexión a mitad hay que repetir la subida completa. Para archivos de varios
   GB en redes inestables, el siguiente paso es el protocolo *resumable* de
   Google.
-- **Transferir carpetas completas entre cuentas no está soportado**: hay que
-  crear la carpeta en destino y transferir sus archivos.
-- **La papelera de Drive sigue consumiendo cuota.** Tras una redistribución, el
-  espacio no se libera del todo hasta que el usuario vacía la papelera en la
-  cuenta origen.
+- **Las transferencias de carpetas se recorren en el servidor.** Una carpeta
+  con decenas de miles de archivos tarda en analizarse antes de empezar, y la
+  vista previa deja de contar a los 5000 archivos (avisa de que es un mínimo).
+  Los documentos de Google se copian convertidos y su carpeta de origen se
+  conserva al mover, porque nunca quedará vacía.
+- **La papelera de Drive sigue consumiendo cuota.** Tras una redistribución con
+  papelera, el espacio no se libera hasta vaciarla (`DELETE /drive/:accountId/trash`)
+  o usar `permanentlyDeleteSource`. Aun así, Google tarda unos minutos en
+  recalcular la cuota tras borrar.
+- **Gmail y Google Fotos no se distinguen.** La Drive API solo publica el uso
+  total y el de Drive; `usageOutsideDrive` es la suma de ambos.

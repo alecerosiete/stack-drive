@@ -17,6 +17,9 @@ import {
   StorageQuotaView,
   toAccountRef,
   toFileView,
+  toTreeNode,
+  TREE_FIELDS,
+  TreeNode,
 } from './drive.types';
 import { CreateFolderDto, ListFilesQueryDto, UpdateFileDto } from './dto/drive.dto';
 import { IncomingFile } from './upload-stream.util';
@@ -113,31 +116,74 @@ export class DriveService {
       const name = segment.trim();
       if (!name) continue;
 
-      const existing = await this.run(ctx, 'files.list(folder lookup)', (drive) =>
-        drive.files.list({
-          q: [
-            `name = '${escapeQueryValue(name)}'`,
-            `'${escapeQueryValue(parentId)}' in parents`,
-            `mimeType = '${FOLDER_MIME_TYPE}'`,
-            'trashed = false',
-          ].join(' and '),
-          pageSize: 1,
-          fields: `files(${FILE_FIELDS})`,
-          supportsAllDrives: true,
-          includeItemsFromAllDrives: true,
-        }),
-      );
-
-      const found = existing.data.files?.[0];
-      const folder = found
-        ? toFileView(found, ctx.account)
-        : await this.createFolder(ctx, { name, parentId });
+      const folder =
+        (await this.findFolderByName(ctx, parentId, name)) ??
+        (await this.createFolder(ctx, { name, parentId }));
 
       created.push(folder);
       parentId = folder.id;
     }
 
     return created;
+  }
+
+  /** Carpeta (no en la papelera) con ese nombre exacto dentro de `parentId`. */
+  async findFolderByName(
+    ctx: DriveContext,
+    parentId: string,
+    name: string,
+  ): Promise<DriveFileView | null> {
+    const response = await this.run(ctx, 'files.list(folder lookup)', (drive) =>
+      drive.files.list({
+        q: [
+          `name = '${escapeQueryValue(name)}'`,
+          `'${escapeQueryValue(parentId)}' in parents`,
+          `mimeType = '${FOLDER_MIME_TYPE}'`,
+          'trashed = false',
+        ].join(' and '),
+        pageSize: 1,
+        fields: `files(${FILE_FIELDS})`,
+        supportsAllDrives: true,
+        includeItemsFromAllDrives: true,
+      }),
+    );
+    const found = response.data.files?.[0];
+    return found ? toFileView(found, ctx.account) : null;
+  }
+
+  /**
+   * TODOS los hijos directos de una carpeta, recorriendo la paginación.
+   * Incluye `ownedByMe`, que el listado normal no pide: decide si un archivo
+   * se puede borrar tras moverlo.
+   */
+  async listChildren(ctx: DriveContext, folderId: string): Promise<TreeNode[]> {
+    const nodes: TreeNode[] = [];
+    let pageToken: string | undefined;
+
+    do {
+      const response = await this.run(ctx, 'files.list(children)', (drive) =>
+        drive.files.list({
+          q: `'${escapeQueryValue(folderId)}' in parents and trashed = false`,
+          pageSize: 1000,
+          pageToken,
+          fields: `nextPageToken,files(${TREE_FIELDS})`,
+          supportsAllDrives: true,
+          includeItemsFromAllDrives: true,
+        }),
+      );
+      nodes.push(...(response.data.files ?? []).map(toTreeNode));
+      pageToken = response.data.nextPageToken ?? undefined;
+    } while (pageToken);
+
+    return nodes;
+  }
+
+  /** Metadatos de un elemento en la forma que usan los recorridos de árbol. */
+  async getTreeNode(ctx: DriveContext, fileId: string): Promise<TreeNode> {
+    const response = await this.run(ctx, 'files.get(tree)', (drive) =>
+      drive.files.get({ fileId, fields: TREE_FIELDS, supportsAllDrives: true }),
+    );
+    return toTreeNode(response.data);
   }
 
   /**
@@ -259,6 +305,24 @@ export class DriveService {
   }
 
   /**
+   * Vacía la papelera de la cuenta, que es lo único que libera la cuota de lo
+   * que se envió allí (las transferencias, por defecto, mandan el original a
+   * la papelera). Es irreversible y afecta a TODO lo que haya en ella, no solo
+   * a lo que movió StackDrive: solo se ejecuta a petición explícita.
+   *
+   * Devuelve la cuota anterior al vaciado: Google tarda en recalcular la
+   * nueva, así que leerla justo después daría la cifra vieja.
+   */
+  async emptyTrash(ctx: DriveContext): Promise<{ freedBytes: number }> {
+    const before = await this.getQuota(ctx);
+    await this.run(ctx, 'files.emptyTrash', (drive) => drive.files.emptyTrash({}));
+    this.logger.log(
+      `Papelera vaciada en ${ctx.account.email} (~${before.usageInDriveTrash} bytes)`,
+    );
+    return { freedBytes: before.usageInDriveTrash };
+  }
+
+  /**
    * Abre el flujo binario de un archivo. Los documentos nativos de Google se
    * exportan a su equivalente de Office, porque no tienen bytes propios.
    */
@@ -328,13 +392,15 @@ export class DriveService {
     // `limit` viene ausente en cuentas con almacenamiento ilimitado.
     const limit = quota.limit !== undefined && quota.limit !== null ? Number(quota.limit) : null;
     const usage = Number(quota.usage ?? 0);
+    const usageInDrive = Number(quota.usageInDrive ?? 0);
 
     return {
       account: toAccountRef(ctx.account),
       limit,
       usage,
-      usageInDrive: Number(quota.usageInDrive ?? 0),
+      usageInDrive,
       usageInDriveTrash: Number(quota.usageInDriveTrash ?? 0),
+      usageOutsideDrive: Math.max(usage - usageInDrive, 0),
       freeBytes: limit === null ? null : Math.max(limit - usage, 0),
       usedPercent: limit === null || limit === 0 ? null : Math.round((usage / limit) * 1000) / 10,
     };

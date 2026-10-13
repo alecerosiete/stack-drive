@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type MouseEvent } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
 import { toast } from 'sonner';
 import {
@@ -21,7 +21,7 @@ import {
   Upload,
   X,
 } from 'lucide-react';
-import { useAccountQuota, useAccounts, useDeleteFile, useFolder, useUpdateFile, type FolderOptions } from '../../api/hooks';
+import { useAccountQuota, useAccounts, useDeleteFile, useEmptyTrash, useFolder, useUpdateFile, type FolderOptions } from '../../api/hooks';
 import type { DriveFile } from '../../api/types';
 import { accountColor, accountLabel } from '../../lib/account-color';
 import { ApiError } from '../../lib/api';
@@ -33,13 +33,14 @@ import { Badge } from '../../components/ui/Badge';
 import { Menu, type MenuItem } from '../../components/ui/Menu';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
-import { QuotaBar } from '../../components/ui/StackMeter';
+import { QuotaBreakdown } from '../../components/ui/StackMeter';
 import { AccountAvatar } from '../../components/ui/AccountAvatar';
 import { inputClass } from '../../components/ui/Field';
 import { uploads } from '../uploads/upload-store';
 import { FileIcon, fileKind } from './file-icon';
 import { useBreadcrumbs } from './use-breadcrumbs';
-import { MoveDialog, NewFolderDialog, RenameDialog, TransferDialog } from './dialogs';
+import { MoveDialog, NewFolderDialog, RenameDialog } from './dialogs';
+import { startItemsDrag, transferIntent } from '../transfers/transfer-intent';
 
 type View = 'list' | 'grid';
 type Sort = FolderOptions['orderBy'];
@@ -76,8 +77,13 @@ export function ExplorerPage() {
   const [view, setView] = useState<View>(() => readPref('stackdrive.view', 'list', ['list', 'grid'] as const));
   const [sort, setSort] = useState<Sort>(() => readPref('stackdrive.sort', 'folder,name', ['folder,name', 'modifiedTime', 'quotaBytesUsed'] as const));
   const [showTrashed, setShowTrashed] = useState(false);
+  const emptyTrash = useEmptyTrash(accountId);
+  const [confirmEmptyTrash, setConfirmEmptyTrash] = useState(false);
   const [filter, setFilter] = useState('');
   const [selected, setSelected] = useState<string | null>(null);
+  /** Selección múltiple (casillas). `selected` es solo el foco del teclado. */
+  const [checked, setChecked] = useState<Set<string>>(() => new Set());
+  const anchor = useRef<string | null>(null);
   const [dragging, setDragging] = useState(false);
   const dragDepth = useRef(0);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -85,12 +91,13 @@ export function ExplorerPage() {
   const [newFolderOpen, setNewFolderOpen] = useState(false);
   const [renaming, setRenaming] = useState<DriveFile | null>(null);
   const [moving, setMoving] = useState<DriveFile | null>(null);
-  const [transferring, setTransferring] = useState<DriveFile | null>(null);
   const [deleting, setDeleting] = useState<DriveFile | null>(null);
 
   // Al cambiar de carpeta, la selección y el filtro de la anterior ya no aplican.
   useEffect(() => {
     setSelected(null);
+    setChecked(new Set());
+    anchor.current = null;
     setFilter('');
   }, [accountId, folderId]);
 
@@ -105,6 +112,56 @@ export function ExplorerPage() {
     const q = filter.trim().toLowerCase();
     return q ? all.filter((f) => f.name.toLowerCase().includes(q)) : all;
   }, [folder.data, filter]);
+
+  const checkedFiles = useMemo(
+    () => (folder.data?.files ?? []).filter((f) => checked.has(f.id)),
+    [folder.data, checked],
+  );
+
+  /** Clic con modificadores, como en un explorador de escritorio. */
+  const toggle = (file: DriveFile, index: number, event: { shiftKey: boolean }) => {
+    // El ancla se lee ahora: el actualizador de estado puede ejecutarse más
+    // tarde, cuando `anchor.current` ya apunta a este mismo archivo.
+    const from = files.findIndex((f) => f.id === anchor.current);
+    setChecked((prev) => {
+      const next = new Set(prev);
+      if (event.shiftKey && from !== -1) {
+        const [a, b] = from < index ? [from, index] : [index, from];
+        files.slice(a, b + 1).forEach((f) => next.add(f.id));
+      } else if (next.has(file.id)) {
+        next.delete(file.id);
+      } else {
+        next.add(file.id);
+      }
+      return next;
+    });
+    anchor.current = file.id;
+  };
+
+  const onRowClick = (event: MouseEvent, file: DriveFile, index: number) => {
+    setSelected(file.id);
+    if (event.shiftKey || event.metaKey || event.ctrlKey) {
+      event.preventDefault();
+      toggle(file, index, event);
+    } else {
+      anchor.current = file.id;
+    }
+  };
+
+  const clearChecked = () => {
+    setChecked(new Set());
+    anchor.current = null;
+  };
+
+  const openTransfer = (items: DriveFile[]) =>
+    transferIntent.open({
+      accountId,
+      items: items.filter((f) => !f.trashed),
+      onQueued: () => setChecked((prev) => (items.some((i) => prev.has(i.id)) ? new Set() : prev)),
+    });
+
+  /** Lo que arrastra o transfiere una fila: toda la selección si forma parte de ella. */
+  const itemsFor = (file: DriveFile) => (checked.has(file.id) ? checkedFiles : [file]);
 
   const open = useCallback(
     (file: DriveFile) => {
@@ -147,7 +204,7 @@ export function ExplorerPage() {
       : []),
     { label: 'Renombrar', icon: <Pencil />, onSelect: () => setRenaming(file), separatorBefore: true },
     { label: 'Mover a…', icon: <FolderInput />, onSelect: () => setMoving(file) },
-    ...(!file.isFolder ? [{ label: 'Transferir a otra cuenta', icon: <ArrowLeftRight />, onSelect: () => setTransferring(file) }] : []),
+    ...(!file.trashed ? [{ label: 'Transferir a otra cuenta', icon: <ArrowLeftRight />, onSelect: () => openTransfer(itemsFor(file)) }] : []),
     file.trashed
       ? { label: 'Restaurar', icon: <RotateCcw />, onSelect: () => trash(file, false), separatorBefore: true }
       : { label: 'Enviar a la papelera', icon: <Trash2 />, onSelect: () => trash(file, true), separatorBefore: true },
@@ -183,6 +240,24 @@ export function ExplorerPage() {
         break;
       case 'Enter':
         if (current) open(current);
+        break;
+      case ' ':
+        if (current) toggle(current, index, event);
+        break;
+      case 'a':
+      case 'A':
+        if (!(event.metaKey || event.ctrlKey)) return;
+        setChecked(new Set(files.map((f) => f.id)));
+        break;
+      case 'Escape':
+        if (checked.size === 0) return;
+        clearChecked();
+        break;
+      case 't':
+      case 'T':
+        if (event.metaKey || event.ctrlKey || event.altKey) return;
+        if (checkedFiles.length) openTransfer(checkedFiles);
+        else if (current) openTransfer([current]);
         break;
       case 'F2':
         if (current) setRenaming(current);
@@ -243,15 +318,21 @@ export function ExplorerPage() {
             {account?.alias && <p className="truncate font-mono text-xs text-faint">{account.email}</p>}
           </div>
           {quota.data && (
-            <div className="w-full sm:w-60">
-              <div className="mb-1.5 flex justify-between font-mono text-xs tabular">
+            <div className="w-full sm:w-80">
+              <div className="mb-1.5 flex items-center justify-between gap-2 font-mono text-xs tabular">
                 <span>{formatBytes(quota.data.usage)} usados</span>
+                {quota.data.usageInDriveTrash > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setConfirmEmptyTrash(true)}
+                    className="flex items-center gap-1 rounded-md px-1.5 py-0.5 font-sans text-[11px] text-muted transition-colors hover:bg-sunken hover:text-danger"
+                  >
+                    <Trash2 className="size-3" /> Vaciar papelera
+                  </button>
+                )}
                 <span className="text-faint">{quota.data.limit ? formatPercent(quota.data.usedPercent) : '∞'}</span>
               </div>
-              <QuotaBar percent={quota.data.usedPercent} color={color} />
-              {quota.data.usageInDriveTrash > 0 && (
-                <p className="mt-1 text-[11px] text-faint">{formatBytes(quota.data.usageInDriveTrash)} en la papelera</p>
-              )}
+              <QuotaBreakdown quota={quota.data} color={color} compact />
             </div>
           )}
         </header>
@@ -376,7 +457,16 @@ export function ExplorerPage() {
           <div className={cn('card overflow-hidden transition-opacity', folder.isPlaceholderData && 'opacity-60')}>
             <div role="grid" aria-label="Archivos" aria-rowcount={files.length} onKeyDown={onListKeyDown}>
               <div role="row" className="grid grid-cols-[1fr_auto] gap-4 border-b border-line bg-sunken/40 px-4 py-2 font-mono text-[11px] tracking-wide text-faint uppercase sm:grid-cols-[1fr_7rem_9rem_2.5rem]">
-                <span role="columnheader">Nombre</span>
+                <span role="columnheader" className="flex items-center gap-3">
+                  <SelectBox
+                    label="Seleccionar todo"
+                    checked={checked.size > 0 && files.every((f) => checked.has(f.id))}
+                    indeterminate={checked.size > 0 && !files.every((f) => checked.has(f.id))}
+                    onChange={(value) => setChecked(value ? new Set(files.map((f) => f.id)) : new Set())}
+                    visible
+                  />
+                  Nombre
+                </span>
                 <span role="columnheader" className="hidden text-right sm:block">Tamaño</span>
                 <span role="columnheader" className="hidden sm:block">Modificado</span>
                 <span role="columnheader" className="sr-only">Acciones</span>
@@ -387,18 +477,28 @@ export function ExplorerPage() {
                   id={`row-${file.id}`}
                   role="row"
                   tabIndex={selected === file.id || (!selected && index === 0) ? 0 : -1}
-                  aria-selected={selected === file.id}
-                  onClick={() => setSelected(file.id)}
+                  aria-selected={selected === file.id || checked.has(file.id)}
+                  onClick={(e) => onRowClick(e, file, index)}
                   onDoubleClick={() => open(file)}
                   onFocus={() => setSelected(file.id)}
+                  draggable={!file.trashed}
+                  onDragStart={(e) => startItemsDrag(e, accountId, itemsFor(file))}
                   className={cn(
-                    'group grid cursor-default grid-cols-[1fr_auto] items-center gap-4 border-b border-line px-4 py-2 outline-none last:border-b-0 sm:grid-cols-[1fr_7rem_9rem_2.5rem]',
+                    'group grid cursor-default grid-cols-[1fr_auto] items-center gap-4 border-b border-line px-4 py-2 outline-none select-none last:border-b-0 sm:grid-cols-[1fr_7rem_9rem_2.5rem]',
                     'transition-colors hover:bg-sunken/40',
                     selected === file.id && 'bg-accent-soft/50 hover:bg-accent-soft/60',
+                    checked.has(file.id) && 'bg-accent-soft/70 hover:bg-accent-soft/80',
                     file.trashed && 'opacity-60',
                   )}
                 >
                   <span role="gridcell" className="flex min-w-0 items-center gap-3">
+                    <SelectBox
+                      label={`Seleccionar ${file.name}`}
+                      checked={checked.has(file.id)}
+                      onChange={() => toggle(file, index, { shiftKey: false })}
+                      onShiftClick={() => toggle(file, index, { shiftKey: true })}
+                      visible={checked.size > 0}
+                    />
                     <FileIcon file={file} />
                     <button
                       tabIndex={-1}
@@ -436,17 +536,29 @@ export function ExplorerPage() {
                 id={`row-${file.id}`}
                 role="gridcell"
                 tabIndex={selected === file.id || (!selected && index === 0) ? 0 : -1}
-                aria-selected={selected === file.id}
-                onClick={() => setSelected(file.id)}
+                aria-selected={selected === file.id || checked.has(file.id)}
+                onClick={(e) => onRowClick(e, file, index)}
                 onDoubleClick={() => open(file)}
                 onFocus={() => setSelected(file.id)}
+                draggable={!file.trashed}
+                onDragStart={(e) => startItemsDrag(e, accountId, itemsFor(file))}
                 className={cn(
-                  'card group relative flex cursor-default flex-col overflow-hidden outline-none transition-[border-color,transform] hover:-translate-y-0.5 hover:border-line-strong animate-rise',
+                  'card group relative flex cursor-default flex-col overflow-hidden outline-none select-none transition-[border-color,transform] hover:-translate-y-0.5 hover:border-line-strong animate-rise',
                   selected === file.id && 'border-accent ring-3 ring-accent/15',
+                  checked.has(file.id) && 'border-accent bg-accent-soft/40 ring-3 ring-accent/25',
                   file.trashed && 'opacity-60',
                 )}
                 style={{ animationDelay: `${Math.min(index, 20) * 18}ms` }}
               >
+                <span className="absolute top-2 left-2 z-10 rounded-md bg-canvas/85 p-1 backdrop-blur">
+                  <SelectBox
+                    label={`Seleccionar ${file.name}`}
+                    checked={checked.has(file.id)}
+                    onChange={() => toggle(file, index, { shiftKey: false })}
+                    onShiftClick={() => toggle(file, index, { shiftKey: true })}
+                    visible={checked.size > 0}
+                  />
+                </span>
                 <Thumb file={file} />
                 <div className="flex items-center gap-2 border-t border-line px-3 py-2.5">
                   <FileIcon file={file} className="size-4 shrink-0" />
@@ -462,7 +574,7 @@ export function ExplorerPage() {
           <p className="mt-4 text-center font-mono text-[11px] text-faint">
             {files.length} elemento{files.length === 1 ? '' : 's'}
             {folder.data.nextPageToken && ' · se muestran los primeros 500'}
-            {' · '}doble clic o Enter para abrir · F2 renombrar · Supr papelera
+            {' · '}doble clic o Enter para abrir · Mayús/Ctrl+clic seleccionar · T transferir · arrastra a otra cuenta de la barra lateral
           </p>
         )}
       </div>
@@ -481,7 +593,25 @@ export function ExplorerPage() {
       <NewFolderDialog accountId={accountId} parentId={folderId} open={newFolderOpen} onClose={() => setNewFolderOpen(false)} />
       <RenameDialog accountId={accountId} file={renaming} onClose={() => setRenaming(null)} />
       <MoveDialog accountId={accountId} file={moving} onClose={() => setMoving(null)} />
-      <TransferDialog accountId={accountId} file={transferring} onClose={() => setTransferring(null)} />
+      {checkedFiles.length > 0 && (
+        <SelectionBar
+          files={checkedFiles}
+          onClear={clearChecked}
+          onTransfer={() => openTransfer(checkedFiles)}
+          onDownload={() => checkedFiles.filter((f) => !f.isFolder).forEach(download)}
+          onTrash={() => {
+            const targets = checkedFiles.filter((f) => !f.trashed);
+            void Promise.allSettled(targets.map((f) => update.mutateAsync({ fileId: f.id, trashed: true }))).then((results) => {
+              const ok = targets.filter((_, i) => results[i]!.status === 'fulfilled');
+              toast.success(`${ok.length} elemento${ok.length === 1 ? '' : 's'} a la papelera`, {
+                action: { label: 'Deshacer', onClick: () => ok.forEach((f) => update.mutate({ fileId: f.id, trashed: false })) },
+              });
+              if (ok.length < targets.length) toast.error(`${targets.length - ok.length} no se pudieron enviar a la papelera`);
+            });
+            clearChecked();
+          }}
+        />
+      )}
       <ConfirmDialog
         open={!!deleting}
         onClose={() => setDeleting(null)}
@@ -500,6 +630,28 @@ export function ExplorerPage() {
         }
       >
         «<strong className="text-ink">{deleting?.name}</strong>» se borrará sin pasar por la papelera. {deleting?.isFolder && 'Incluye todo su contenido. '}No se puede deshacer.
+      </ConfirmDialog>
+      <ConfirmDialog
+        open={confirmEmptyTrash}
+        onClose={() => setConfirmEmptyTrash(false)}
+        title="¿Vaciar la papelera?"
+        confirmLabel="Vaciar papelera"
+        danger
+        loading={emptyTrash.isPending}
+        onConfirm={() =>
+          emptyTrash.mutate(undefined, {
+            onSuccess: ({ freedBytes }) => {
+              toast.success(`Papelera vaciada: ${formatBytes(freedBytes)} liberados`, {
+                description: 'Google puede tardar unos minutos en reflejarlo en la cuota.',
+              });
+              setConfirmEmptyTrash(false);
+            },
+            onError: (error) => toast.error(error.message),
+          })
+        }
+      >
+        Se borrará para siempre todo lo que hay en la papelera de <strong className="text-ink">{account ? accountLabel(account) : 'esta cuenta'}</strong>
+        {quota.data && <> ({formatBytes(quota.data.usageInDriveTrash)})</>}, también lo que no movió StackDrive. No se puede deshacer.
       </ConfirmDialog>
     </div>
   );
@@ -552,6 +704,87 @@ function ListSkeleton() {
           <span className="skeleton ml-auto h-3 w-16" />
         </div>
       ))}
+    </div>
+  );
+}
+
+/**
+ * Casilla de selección. Oculta hasta pasar el ratón por la fila (o mientras
+ * haya algo seleccionado) para no ensuciar la lista; siempre visible en
+ * pantallas táctiles, donde no hay hover.
+ */
+function SelectBox({ label, checked, indeterminate, onChange, onShiftClick, visible }: {
+  label: string;
+  checked: boolean;
+  indeterminate?: boolean;
+  onChange: (checked: boolean) => void;
+  onShiftClick?: () => void;
+  visible?: boolean;
+}) {
+  return (
+    <input
+      type="checkbox"
+      aria-label={label}
+      tabIndex={-1}
+      checked={checked}
+      ref={(el) => {
+        if (el) el.indeterminate = !!indeterminate;
+      }}
+      onClick={(e) => {
+        e.stopPropagation();
+        if (e.shiftKey && onShiftClick) {
+          e.preventDefault();
+          onShiftClick();
+        }
+      }}
+      onChange={(e) => onChange(e.target.checked)}
+      className={cn(
+        'size-4 shrink-0 cursor-pointer accent-[var(--accent)] transition-opacity',
+        !checked && !indeterminate && !visible && 'sm:opacity-0 sm:group-hover:opacity-100 sm:focus-visible:opacity-100',
+      )}
+    />
+  );
+}
+
+function SelectionBar({ files, onClear, onTransfer, onDownload, onTrash }: {
+  files: DriveFile[];
+  onClear: () => void;
+  onTransfer: () => void;
+  onDownload: () => void;
+  onTrash: () => void;
+}) {
+  const folders = files.filter((f) => f.isFolder).length;
+  const bytes = files.reduce((sum, f) => sum + (f.isFolder ? 0 : (f.size ?? 0)), 0);
+  const downloadable = files.length - folders;
+
+  return (
+    <div
+      role="toolbar"
+      aria-label="Acciones sobre la selección"
+      className="fixed bottom-5 left-1/2 z-30 flex -translate-x-1/2 items-center gap-1 rounded-2xl border border-line-strong bg-raised p-1.5 pl-4 shadow-[var(--shadow)] animate-rise lg:left-[calc(50%+8rem)]"
+    >
+      <p className="mr-2 text-sm whitespace-nowrap">
+        <span className="font-medium">{files.length} seleccionado{files.length === 1 ? '' : 's'}</span>
+        <span className="hidden font-mono text-xs text-faint sm:inline">
+          {' · '}
+          {formatBytes(bytes)}
+          {folders > 0 && ` + ${folders} carpeta${folders === 1 ? '' : 's'}`}
+        </span>
+      </p>
+      <Button size="sm" variant="primary" icon={<ArrowLeftRight className="size-3.5" />} onClick={onTransfer}>
+        Transferir
+      </Button>
+      {downloadable > 0 && (
+        <Button size="sm" variant="ghost" icon={<ArrowDownToLine className="size-3.5" />} onClick={onDownload} title={folders ? 'Las carpetas no se descargan' : undefined}>
+          <span className="hidden sm:inline">Descargar</span>
+        </Button>
+      )}
+      <Button size="sm" variant="ghost" icon={<Trash2 className="size-3.5" />} onClick={onTrash}>
+        <span className="hidden sm:inline">Papelera</span>
+      </Button>
+      <button onClick={onClear} aria-label="Quitar selección" title="Quitar selección (Esc)" className="grid size-8 place-items-center rounded-lg text-faint hover:bg-sunken hover:text-ink">
+        <X className="size-4" />
+      </button>
     </div>
   );
 }

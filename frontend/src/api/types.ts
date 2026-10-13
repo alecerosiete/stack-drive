@@ -70,6 +70,8 @@ export interface StorageQuota {
   usage: number;
   usageInDrive: number;
   usageInDriveTrash: number;
+  /** Gmail + Google Fotos: la API no los separa. */
+  usageOutsideDrive: number;
   freeBytes: number | null;
   usedPercent: number | null;
 }
@@ -114,6 +116,7 @@ export interface TransferResult {
   verified: boolean;
   verification: 'md5' | 'size' | 'none';
   sourceTrashed: boolean;
+  sourceDeleted: boolean;
   durationMs: number;
 }
 
@@ -123,20 +126,101 @@ export interface TransferRequest {
   from: { accountId: string; fileId: string };
   to: { accountId: string; parentId?: string; name?: string };
   deleteSource?: boolean;
+  /** Con `deleteSource`: borra el original sin pasar por la papelera. */
+  permanentlyDeleteSource?: boolean;
 }
 
-export interface TransferJob {
+export type ConflictMode = 'merge' | 'rename';
+
+export interface BatchTransferRequest {
+  fromAccountId: string;
+  toAccountId: string;
+  parentId?: string;
+  /** `parentId` por elemento solo lo usa «Reintentar fallidos». */
+  items: Array<{ id: string; parentId?: string }>;
+  deleteSource?: boolean;
+  permanentlyDeleteSource?: boolean;
+  onConflict?: ConflictMode;
+  label?: string;
+}
+
+export interface TransferPreview {
+  files: number;
+  folders: number;
+  bytes: number;
+  nativeDocs: number;
+  shortcuts: number;
+  notOwned: number;
+  notExportable: number;
+  truncated: boolean;
+  conflicts: Array<{ id: string; name: string }>;
+  targetFreeBytes: number | null;
+  fits: boolean;
+}
+
+export type BatchItemStatus = 'moved' | 'copied' | 'already' | 'skipped' | 'failed';
+
+export interface BatchItemOutcome {
+  fileId: string;
+  name: string;
+  path: string;
+  size: number | null;
+  status: BatchItemStatus;
+  reason: string | null;
+  targetParentId: string;
+  uploadedId: string | null;
+}
+
+export interface BatchProgress {
+  phase: 'scanning' | 'folders' | 'transferring' | 'cleaning';
+  percent: number;
+  filesDone: number;
+  filesTotal: number;
+  bytesDone: number;
+  bytesTotal: number;
+  current: string | null;
+}
+
+export interface BatchTransferResult {
+  kind: 'batch';
+  from: AccountRef;
+  to: AccountRef;
+  items: BatchItemOutcome[];
+  counts: Record<BatchItemStatus, number>;
+  bytesTransferred: number;
+  foldersCreated: number;
+  removedSourceFolders: string[];
+  keptSourceFolders: Array<{ name: string; reason: string }>;
+  durationMs: number;
+}
+
+interface TransferJobBase {
   jobId: string;
   state: JobState;
   progress: number;
   attemptsMade: number;
   createdAt: string | null;
   finishedAt: string | null;
-  result: TransferResult | null;
   error: string | null;
-  /** Qué se pidió transferir; disponible aunque el job no haya terminado. */
-  request?: TransferRequest;
 }
+
+/** Un archivo suelto. */
+export interface FileTransferJob extends TransferJobBase {
+  kind: 'file';
+  result: TransferResult | null;
+  /** Qué se pidió transferir; disponible aunque el job no haya terminado. */
+  request: TransferRequest | null;
+}
+
+/** Varios elementos y/o carpetas completas. */
+export interface BatchTransferJob extends TransferJobBase {
+  kind: 'batch';
+  result: BatchTransferResult | null;
+  detail: BatchProgress | null;
+  batch: BatchTransferRequest | null;
+}
+
+export type TransferJob = FileTransferJob | BatchTransferJob;
 
 export interface LinkUrl {
   authUrl: string;

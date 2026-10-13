@@ -18,6 +18,8 @@ import type {
   Profile,
   RebalancePlan,
   StorageQuota,
+  BatchTransferRequest,
+  TransferPreview,
   TokenPair,
   TransferJob,
   TransferRequest,
@@ -38,6 +40,7 @@ export const keys = {
   accountQuota: (accountId: string) => ['drive', accountId, 'quota'] as const,
   search: (q: string) => ['search', q] as const,
   plan: (threshold: number | null) => ['rebalance', threshold] as const,
+  preview: (from: string, to: string, parentId: string, ids: string[]) => ['transfer-preview', from, to, parentId, ids] as const,
   transfers: ['transfers'] as const,
 };
 
@@ -243,6 +246,43 @@ export function useDeleteFile(accountId: string) {
   });
 }
 
+/**
+ * Vacía la papelera de una cuenta. Google tarda un rato en recalcular la
+ * cuota, así que refrescarla en el acto devolvería la cifra vieja: se descuenta
+ * en caché lo liberado y solo se recargan los listados.
+ */
+export function useEmptyTrash(accountId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api<{ freedBytes: number }>(`/drive/${accountId}/trash`, { method: 'DELETE' }),
+    onSuccess: ({ freedBytes }) => {
+      const release = (q: StorageQuota): StorageQuota => {
+        if (q.account.id !== accountId) return q;
+        const usage = Math.max(q.usage - freedBytes, 0);
+        return {
+          ...q,
+          usage,
+          usageInDrive: Math.max(q.usageInDrive - freedBytes, 0),
+          usageInDriveTrash: 0,
+          freeBytes: q.limit === null ? null : Math.max(q.limit - usage, 0),
+          usedPercent: q.limit ? Math.round((usage / q.limit) * 1000) / 10 : q.usedPercent,
+        };
+      };
+      qc.setQueryData<StorageQuota>(keys.accountQuota(accountId), (q) => q && release(q));
+      qc.setQueryData<AggregateQuota>(keys.quotaAll, (agg) => {
+        if (!agg) return agg;
+        const usage = Math.max(agg.totals.usage - freedBytes, 0);
+        return {
+          ...agg,
+          results: agg.results.map(release),
+          totals: { ...agg.totals, usage, freeBytes: agg.totals.limit === null ? null : Math.max(agg.totals.limit - usage, 0) },
+        };
+      });
+      void qc.invalidateQueries({ queryKey: [...keys.drive(accountId), 'folder'] });
+    },
+  });
+}
+
 export function invalidateAfterUpload(qc: QueryClient, accountId: string) {
   invalidateDrive(qc, accountId);
 }
@@ -271,10 +311,11 @@ export function useTransfers() {
         (job) => job.state === 'completed' && previous.some((p) => p.jobId === job.jobId && p.state !== 'completed'),
       );
       for (const job of justFinished) {
-        if (job.request) {
-          invalidateDrive(qc, job.request.from.accountId);
-          invalidateDrive(qc, job.request.to.accountId);
-        }
+        const ends =
+          job.kind === 'batch'
+            ? job.batch && [job.batch.fromAccountId, job.batch.toAccountId]
+            : job.request && [job.request.from.accountId, job.request.to.accountId];
+        ends?.forEach((accountId) => invalidateDrive(qc, accountId));
       }
       return jobs;
     },
@@ -324,6 +365,39 @@ export function useEnqueueTransfer() {
         if (fileName) rememberTransferName(job.jobId, fileName);
         return job;
       }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: keys.transfers }),
+  });
+}
+
+/**
+ * Qué supondría transferir unos elementos: archivos, bytes, conflictos de
+ * nombre y si cabe. Recorre carpetas en el servidor, así que se cachea por
+ * combinación de origen, destino y selección.
+ */
+export function useTransferPreview(input: { fromAccountId: string; toAccountId: string | null; parentId: string; ids: string[] } | null) {
+  return useQuery({
+    queryKey: keys.preview(input?.fromAccountId ?? '', input?.toAccountId ?? '', input?.parentId ?? 'root', input?.ids ?? []),
+    queryFn: () =>
+      api<TransferPreview>('/drive/transfers/preview', {
+        method: 'POST',
+        body: {
+          fromAccountId: input!.fromAccountId,
+          toAccountId: input!.toAccountId,
+          parentId: input!.parentId === 'root' ? undefined : input!.parentId,
+          ids: input!.ids,
+        },
+      }),
+    enabled: !!input?.toAccountId && input.ids.length > 0,
+    staleTime: 30_000,
+    placeholderData: keepPreviousData,
+  });
+}
+
+export function useEnqueueBatch() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: BatchTransferRequest) =>
+      api<{ jobId: string }>('/drive/transfers/batch', { method: 'POST', body: input }),
     onSuccess: () => qc.invalidateQueries({ queryKey: keys.transfers }),
   });
 }

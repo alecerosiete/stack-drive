@@ -23,6 +23,43 @@ export const FILE_FIELDS = [
   'shortcutDetails',
 ].join(',');
 
+/** Campos mínimos para recorrer un árbol de carpetas (transferencias por lotes). */
+export const TREE_FIELDS = 'id,name,mimeType,size,md5Checksum,ownedByMe,createdTime,modifiedTime';
+
+export interface TreeNode {
+  id: string;
+  name: string;
+  mimeType: string;
+  isFolder: boolean;
+  size: number | null;
+  md5Checksum: string | null;
+  /** Solo lo propio se puede borrar y solo lo propio consume TU cuota. */
+  ownedByMe: boolean;
+  /**
+   * Fechas ISO. Sirven para reconocer la copia convertida de un documento de
+   * Google: no tiene md5 comparable, pero si se creó después de la última
+   * edición del original, sigue al día.
+   */
+  createdTime: string | null;
+  modifiedTime: string | null;
+}
+
+export function toTreeNode(file: drive_v3.Schema$File): TreeNode {
+  return {
+    id: file.id ?? '',
+    name: file.name ?? '(sin nombre)',
+    mimeType: file.mimeType ?? 'application/octet-stream',
+    isFolder: file.mimeType === FOLDER_MIME_TYPE,
+    size: file.size !== undefined && file.size !== null ? Number(file.size) : null,
+    md5Checksum: file.md5Checksum ?? null,
+    // Ausente en unidades compartidas, donde el propietario es la unidad: ahí
+    // el usuario sí puede borrar si tiene permisos, así que no lo bloqueamos.
+    ownedByMe: file.ownedByMe ?? true,
+    createdTime: file.createdTime ?? null,
+    modifiedTime: file.modifiedTime ?? null,
+  };
+}
+
 /** Referencia mínima a la cuenta origen: imprescindible en vistas unificadas. */
 export interface AccountRef {
   id: string;
@@ -69,8 +106,15 @@ export interface StorageQuotaView {
   /** Bytes totales. `null` en cuentas con almacenamiento ilimitado. */
   limit: number | null;
   usage: number;
+  /** Incluye la papelera: `usageInDriveTrash` es un subconjunto de esta cifra. */
   usageInDrive: number;
   usageInDriveTrash: number;
+  /**
+   * Gmail + Google Fotos juntos. La Drive API solo publica el total de la
+   * cuenta y el de Drive; el desglose por servicio que muestra Google One no
+   * está expuesto, así que lo que no es Drive es lo único que se puede derivar.
+   */
+  usageOutsideDrive: number;
   freeBytes: number | null;
   usedPercent: number | null;
 }

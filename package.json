@@ -17,8 +17,7 @@
     "keygen": "node -e \"console.log(require('crypto').randomBytes(32).toString('base64'))\"",
     "test": "jest",
     "test:watch": "jest --watch",
-    "lint": "tsc --noEmit",
-    "web": "node web/serve.js"
+    "lint": "tsc --noEmit"
   },
   "dependencies": {
     "@nestjs/bullmq": "^11.0.5",

@@ -5,6 +5,8 @@ import { DriveClientFactory, DriveContext } from '../google/drive-client.factory
 import { AppConfiguration } from '../config/configuration';
 import { StorageQuotaView, toAccountRef } from './drive.types';
 import { GoogleAccountNeedsReauthException } from '../common/errors';
+import { Readable } from 'node:stream';
+import { TransferDto } from './dto/drive.dto';
 
 const GB = 1_000_000_000;
 const FIFTEEN_GB = 15 * GB;
@@ -39,6 +41,7 @@ function quotaFor(acc: GoogleAccount, usage: number, limit: number | null = FIFT
     usage,
     usageInDrive: usage,
     usageInDriveTrash: 0,
+    usageOutsideDrive: 0,
     freeBytes: limit === null ? null : limit - usage,
     usedPercent: limit === null ? null : Math.round((usage / limit) * 1000) / 10,
   };
@@ -233,5 +236,86 @@ describe('DriveAggregateService.quota', () => {
     expect(result.totals.usage).toBe(16 * GB);
     expect(result.totals.freeBytes).toBe(14 * GB);
     expect(result.recommendedAccountId).toBe('acc-b');
+  });
+});
+
+describe('DriveAggregateService.transfer (borrado del original)', () => {
+  const origin = account('acc-a', 'a@gmail.com');
+  const target = account('acc-b', 'b@gmail.com');
+
+  function transferHarness(uploaded = { size: 100, md5Checksum: 'abc' }) {
+    const ctxFor = (acc: GoogleAccount) => ({ account: acc, drive: {} }) as unknown as DriveContext;
+    const clients = {
+      forAccount: jest.fn(async (_user: string, id: string) =>
+        ctxFor(id === origin.id ? origin : target),
+      ),
+    } as unknown as DriveClientFactory;
+
+    const deleteFile = jest.fn().mockResolvedValue(undefined);
+    const drive = {
+      getFile: jest.fn().mockResolvedValue({
+        id: 'f1',
+        name: 'video.mp4',
+        mimeType: 'video/mp4',
+        isFolder: false,
+        size: 100,
+        md5Checksum: 'abc',
+      }),
+      download: jest.fn().mockResolvedValue({
+        stream: Readable.from([]),
+        filename: 'video.mp4',
+        mimeType: 'video/mp4',
+        size: 100,
+      }),
+      uploadFile: jest.fn().mockResolvedValue({ id: 'copia', ...uploaded }),
+      deleteFile,
+    } as unknown as DriveService;
+
+    return { service: new DriveAggregateService(clients, drive, config), deleteFile };
+  }
+
+  const request = (extra: Partial<TransferDto> = {}): TransferDto =>
+    ({
+      from: { accountId: origin.id, fileId: 'f1' },
+      to: { accountId: target.id },
+      deleteSource: true,
+      ...extra,
+    }) as TransferDto;
+
+  it('por defecto envía el original a la papelera, no lo borra', async () => {
+    const { service, deleteFile } = transferHarness();
+
+    const result = await service.transfer('user-1', request());
+
+    expect(deleteFile).toHaveBeenCalledWith(expect.anything(), 'f1', false);
+    expect(result).toMatchObject({ sourceTrashed: true, sourceDeleted: false });
+  });
+
+  it('con permanentlyDeleteSource borra el original para liberar la cuota ya', async () => {
+    const { service, deleteFile } = transferHarness();
+
+    const result = await service.transfer('user-1', request({ permanentlyDeleteSource: true }));
+
+    expect(deleteFile).toHaveBeenCalledWith(expect.anything(), 'f1', true);
+    expect(result).toMatchObject({ sourceTrashed: false, sourceDeleted: true });
+  });
+
+  it('nunca borra de forma permanente si la copia no se puede verificar', async () => {
+    // Ni md5 ni tamaño coinciden.
+    const { service, deleteFile } = transferHarness({ size: 99, md5Checksum: 'otro-md5' });
+
+    await expect(
+      service.transfer('user-1', request({ permanentlyDeleteSource: true })),
+    ).rejects.toThrow(/no se pudo verificar/i);
+    expect(deleteFile).not.toHaveBeenCalled();
+  });
+
+  it('rechaza permanentlyDeleteSource sin deleteSource', async () => {
+    const { service, deleteFile } = transferHarness();
+
+    await expect(
+      service.transfer('user-1', request({ deleteSource: false, permanentlyDeleteSource: true })),
+    ).rejects.toThrow(/requiere deleteSource/);
+    expect(deleteFile).not.toHaveBeenCalled();
   });
 });
