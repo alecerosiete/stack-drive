@@ -21,7 +21,7 @@ import {
   Upload,
   X,
 } from 'lucide-react';
-import { useAccountQuota, useAccounts, useDeleteFile, useFolder, useUpdateFile, type FolderOptions } from '../../api/hooks';
+import { useAccountQuota, useAccounts, useDeleteFile, useEmptyTrash, useFolder, useUpdateFile, type FolderOptions } from '../../api/hooks';
 import type { DriveFile } from '../../api/types';
 import { accountColor, accountLabel } from '../../lib/account-color';
 import { ApiError } from '../../lib/api';
@@ -33,7 +33,7 @@ import { Badge } from '../../components/ui/Badge';
 import { Menu, type MenuItem } from '../../components/ui/Menu';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
-import { QuotaBar } from '../../components/ui/StackMeter';
+import { QuotaBreakdown } from '../../components/ui/StackMeter';
 import { AccountAvatar } from '../../components/ui/AccountAvatar';
 import { inputClass } from '../../components/ui/Field';
 import { uploads } from '../uploads/upload-store';
@@ -76,6 +76,8 @@ export function ExplorerPage() {
   const [view, setView] = useState<View>(() => readPref('stackdrive.view', 'list', ['list', 'grid'] as const));
   const [sort, setSort] = useState<Sort>(() => readPref('stackdrive.sort', 'folder,name', ['folder,name', 'modifiedTime', 'quotaBytesUsed'] as const));
   const [showTrashed, setShowTrashed] = useState(false);
+  const emptyTrash = useEmptyTrash(accountId);
+  const [confirmEmptyTrash, setConfirmEmptyTrash] = useState(false);
   const [filter, setFilter] = useState('');
   const [selected, setSelected] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
@@ -243,15 +245,21 @@ export function ExplorerPage() {
             {account?.alias && <p className="truncate font-mono text-xs text-faint">{account.email}</p>}
           </div>
           {quota.data && (
-            <div className="w-full sm:w-60">
-              <div className="mb-1.5 flex justify-between font-mono text-xs tabular">
+            <div className="w-full sm:w-80">
+              <div className="mb-1.5 flex items-center justify-between gap-2 font-mono text-xs tabular">
                 <span>{formatBytes(quota.data.usage)} usados</span>
+                {quota.data.usageInDriveTrash > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setConfirmEmptyTrash(true)}
+                    className="flex items-center gap-1 rounded-md px-1.5 py-0.5 font-sans text-[11px] text-muted transition-colors hover:bg-sunken hover:text-danger"
+                  >
+                    <Trash2 className="size-3" /> Vaciar papelera
+                  </button>
+                )}
                 <span className="text-faint">{quota.data.limit ? formatPercent(quota.data.usedPercent) : '∞'}</span>
               </div>
-              <QuotaBar percent={quota.data.usedPercent} color={color} />
-              {quota.data.usageInDriveTrash > 0 && (
-                <p className="mt-1 text-[11px] text-faint">{formatBytes(quota.data.usageInDriveTrash)} en la papelera</p>
-              )}
+              <QuotaBreakdown quota={quota.data} color={color} compact />
             </div>
           )}
         </header>
@@ -500,6 +508,28 @@ export function ExplorerPage() {
         }
       >
         «<strong className="text-ink">{deleting?.name}</strong>» se borrará sin pasar por la papelera. {deleting?.isFolder && 'Incluye todo su contenido. '}No se puede deshacer.
+      </ConfirmDialog>
+      <ConfirmDialog
+        open={confirmEmptyTrash}
+        onClose={() => setConfirmEmptyTrash(false)}
+        title="¿Vaciar la papelera?"
+        confirmLabel="Vaciar papelera"
+        danger
+        loading={emptyTrash.isPending}
+        onConfirm={() =>
+          emptyTrash.mutate(undefined, {
+            onSuccess: ({ freedBytes }) => {
+              toast.success(`Papelera vaciada: ${formatBytes(freedBytes)} liberados`, {
+                description: 'Google puede tardar unos minutos en reflejarlo en la cuota.',
+              });
+              setConfirmEmptyTrash(false);
+            },
+            onError: (error) => toast.error(error.message),
+          })
+        }
+      >
+        Se borrará para siempre todo lo que hay en la papelera de <strong className="text-ink">{account ? accountLabel(account) : 'esta cuenta'}</strong>
+        {quota.data && <> ({formatBytes(quota.data.usageInDriveTrash)})</>}, también lo que no movió StackDrive. No se puede deshacer.
       </ConfirmDialog>
     </div>
   );

@@ -105,7 +105,7 @@ function JobRow({ job }: { job: TransferJob }) {
             <ShieldCheck className={cn('size-3.5', job.result.verified ? 'text-ok' : 'text-warn')} />
             {job.result.verification === 'none' ? 'Sin verificación (documento nativo)' : `Verificada por ${job.result.verification}`}
           </span>
-          <span>{job.result.sourceTrashed ? 'Original a la papelera' : 'Original conservado'}</span>
+          <span>{job.result.sourceDeleted ? 'Original eliminado' : job.result.sourceTrashed ? 'Original a la papelera' : 'Original conservado'}</span>
           <span className="font-mono">{formatDuration(job.result.durationMs)}</span>
         </p>
       )}

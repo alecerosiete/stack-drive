@@ -184,6 +184,16 @@ export class TransferDto {
   @ToBoolean()
   @IsBoolean()
   deleteSource?: boolean;
+
+  /**
+   * Con `deleteSource`, borra el original de forma permanente en vez de
+   * enviarlo a la papelera, para que la cuota de la cuenta origen se libere
+   * en el acto. Solo tras verificar la copia, igual que la papelera.
+   */
+  @IsOptional()
+  @ToBoolean()
+  @IsBoolean()
+  permanentlyDeleteSource?: boolean;
 }
 
 export class CreateFolderPathDto {

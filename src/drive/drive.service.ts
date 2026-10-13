@@ -259,6 +259,24 @@ export class DriveService {
   }
 
   /**
+   * Vacía la papelera de la cuenta, que es lo único que libera la cuota de lo
+   * que se envió allí (las transferencias, por defecto, mandan el original a
+   * la papelera). Es irreversible y afecta a TODO lo que haya en ella, no solo
+   * a lo que movió StackDrive: solo se ejecuta a petición explícita.
+   *
+   * Devuelve la cuota anterior al vaciado: Google tarda en recalcular la
+   * nueva, así que leerla justo después daría la cifra vieja.
+   */
+  async emptyTrash(ctx: DriveContext): Promise<{ freedBytes: number }> {
+    const before = await this.getQuota(ctx);
+    await this.run(ctx, 'files.emptyTrash', (drive) => drive.files.emptyTrash({}));
+    this.logger.log(
+      `Papelera vaciada en ${ctx.account.email} (~${before.usageInDriveTrash} bytes)`,
+    );
+    return { freedBytes: before.usageInDriveTrash };
+  }
+
+  /**
    * Abre el flujo binario de un archivo. Los documentos nativos de Google se
    * exportan a su equivalente de Office, porque no tienen bytes propios.
    */
@@ -328,13 +346,15 @@ export class DriveService {
     // `limit` viene ausente en cuentas con almacenamiento ilimitado.
     const limit = quota.limit !== undefined && quota.limit !== null ? Number(quota.limit) : null;
     const usage = Number(quota.usage ?? 0);
+    const usageInDrive = Number(quota.usageInDrive ?? 0);
 
     return {
       account: toAccountRef(ctx.account),
       limit,
       usage,
-      usageInDrive: Number(quota.usageInDrive ?? 0),
+      usageInDrive,
       usageInDriveTrash: Number(quota.usageInDriveTrash ?? 0),
+      usageOutsideDrive: Math.max(usage - usageInDrive, 0),
       freeBytes: limit === null ? null : Math.max(limit - usage, 0),
       usedPercent: limit === null || limit === 0 ? null : Math.round((usage / limit) * 1000) / 10,
     };

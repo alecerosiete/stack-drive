@@ -70,6 +70,8 @@ export interface StorageQuota {
   usage: number;
   usageInDrive: number;
   usageInDriveTrash: number;
+  /** Gmail + Google Fotos: la API no los separa. */
+  usageOutsideDrive: number;
   freeBytes: number | null;
   usedPercent: number | null;
 }
@@ -114,6 +116,7 @@ export interface TransferResult {
   verified: boolean;
   verification: 'md5' | 'size' | 'none';
   sourceTrashed: boolean;
+  sourceDeleted: boolean;
   durationMs: number;
 }
 
@@ -123,6 +126,8 @@ export interface TransferRequest {
   from: { accountId: string; fileId: string };
   to: { accountId: string; parentId?: string; name?: string };
   deleteSource?: boolean;
+  /** Con `deleteSource`: borra el original sin pasar por la papelera. */
+  permanentlyDeleteSource?: boolean;
 }
 
 export interface TransferJob {

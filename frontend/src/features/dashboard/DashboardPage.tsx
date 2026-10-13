@@ -4,7 +4,7 @@ import { useAccounts, useAggregateQuota } from '../../api/hooks';
 import { accountColor, accountLabel } from '../../lib/account-color';
 import { formatBytes, formatPercent } from '../../lib/format';
 import { Page, FailureList } from '../../components/ui/Page';
-import { StackMeter, QuotaBar } from '../../components/ui/StackMeter';
+import { StackMeter, QuotaBreakdown } from '../../components/ui/StackMeter';
 import { AccountAvatar } from '../../components/ui/AccountAvatar';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
@@ -139,7 +139,7 @@ export function DashboardPage() {
                       <span>{formatBytes(q.usage)}</span>
                       <span className="text-faint">{formatPercent(q.usedPercent)}</span>
                     </div>
-                    <QuotaBar percent={q.usedPercent} color={accountColor(account.id)} />
+                    <QuotaBreakdown quota={q} color={accountColor(account.id)} compact />
                   </div>
                 ) : (
                   <div className="skeleton mt-auto h-6" />

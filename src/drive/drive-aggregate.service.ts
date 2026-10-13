@@ -104,8 +104,9 @@ export class DriveAggregateService {
    *
    * Entre cuentas distintas no existe un "move" nativo en la Drive API (son
    * usuarios de Google diferentes), así que mover = copiar y, SOLO si la copia
-   * se verifica íntegra, enviar el original a la papelera. Nunca borramos de
-   * forma permanente ni borramos sin verificar.
+   * se verifica íntegra, enviar el original a la papelera. Nunca borramos sin
+   * verificar, y el borrado permanente solo ocurre si el usuario lo pide con
+   * `permanentlyDeleteSource`.
    */
   async transfer(
     userId: string,
@@ -113,6 +114,12 @@ export class DriveAggregateService {
     options: TransferOptions = {},
   ): Promise<TransferResult> {
     const startedAt = Date.now();
+
+    if (dto.permanentlyDeleteSource && !dto.deleteSource) {
+      // Sin deleteSource el original no se toca: aceptar el flag en solitario
+      // haría creer al cliente que se iba a liberar espacio.
+      throw new BadRequestException('permanentlyDeleteSource requiere deleteSource=true');
+    }
 
     if (dto.from.accountId === dto.to.accountId) {
       // Misma cuenta: `files.copy` lo hace del lado de Google, sin mover bytes
@@ -173,6 +180,7 @@ export class DriveAggregateService {
     const verified = verification !== 'none';
 
     let sourceTrashed = false;
+    let sourceDeleted = false;
     if (dto.deleteSource) {
       if (!verified) {
         throw new BadRequestException(
@@ -181,15 +189,19 @@ export class DriveAggregateService {
             `tocado. Revisa la copia (${uploaded.id}) antes de borrar el original.`,
         );
       }
-      // Papelera, no borrado permanente: el usuario conserva 30 días para
-      // deshacer si la transferencia no era lo que esperaba.
-      await this.drive.deleteFile(source, dto.from.fileId, false);
-      sourceTrashed = true;
+      // Por defecto, papelera: el usuario conserva 30 días para deshacer si la
+      // transferencia no era lo que esperaba, a costa de que la cuota no se
+      // libere hasta entonces.
+      const permanent = dto.permanentlyDeleteSource === true;
+      await this.drive.deleteFile(source, dto.from.fileId, permanent);
+      sourceTrashed = !permanent;
+      sourceDeleted = permanent;
     }
 
+    const fate = sourceDeleted ? ', original borrado' : sourceTrashed ? ', original a papelera' : '';
     this.logger.log(
       `Transferido "${meta.name}" de ${source.account.email} a ${target.account.email} ` +
-        `(verificación: ${verification}${sourceTrashed ? ', original a papelera' : ''})`,
+        `(verificación: ${verification}${fate})`,
     );
 
     return {
@@ -203,6 +215,7 @@ export class DriveAggregateService {
       verified,
       verification,
       sourceTrashed,
+      sourceDeleted,
       durationMs: Date.now() - startedAt,
     };
   }
@@ -388,9 +401,12 @@ export class DriveAggregateService {
       parentId: dto.to.parentId,
     });
     let sourceTrashed = false;
+    let sourceDeleted = false;
     if (dto.deleteSource) {
-      await this.drive.deleteFile(ctx, dto.from.fileId, false);
-      sourceTrashed = true;
+      const permanent = dto.permanentlyDeleteSource === true;
+      await this.drive.deleteFile(ctx, dto.from.fileId, permanent);
+      sourceTrashed = !permanent;
+      sourceDeleted = permanent;
     }
 
     return {
@@ -404,6 +420,7 @@ export class DriveAggregateService {
       verified: true,
       verification: 'md5',
       sourceTrashed,
+      sourceDeleted,
       durationMs: Date.now() - startedAt,
     };
   }

@@ -188,7 +188,8 @@ en el panel.
 | `POST` | `/folders/path` | Crea una ruta completa (`informes/2026/Q1`) reutilizando lo que exista. |
 | `PATCH` | `/files/:fileId` | Renombra y/o mueve (`name`, `parentId`, `trashed`). |
 | `DELETE` | `/files/:fileId?permanent=` | Papelera (por defecto) o borrado definitivo. |
-| `GET` | `/quota` | Cuota de esa cuenta. |
+| `GET` | `/quota` | Cuota de esa cuenta, con el desglose Drive / papelera / Gmail + Fotos (`usageOutsideDrive`). |
+| `DELETE` | `/trash` | **Vacía la papelera** de esa cuenta (irreversible) → `{ freedBytes }`. |
 
 ### Drive — vista unificada de todas las cuentas
 
@@ -241,7 +242,8 @@ El sistema **nunca mueve archivos por decisión propia**. El flujo es:
    archivos propone mover (los más grandes primero), a qué cuenta destino y
    cuántos bytes liberaría. **No ejecuta nada.**
 2. El panel muestra el plan y el usuario aprueba los movimientos que quiera.
-3. Por cada uno, `POST /drive/transfers` con `deleteSource: true`.
+3. Por cada uno, `POST /drive/transfers` con `deleteSource: true` (y, si el
+   usuario quiere liberar la cuota al instante, `permanentlyDeleteSource: true`).
 
 Entre cuentas de Google distintas no existe un `move` nativo (son usuarios
 diferentes), así que una transferencia es copiar y luego borrar. El borrado del
@@ -250,8 +252,9 @@ original tiene tres salvaguardas:
 - Se **verifica la integridad** de la copia (md5, o tamaño si Google no publica
   checksum) **antes** de tocar el original. Si no se puede verificar, la copia
   se queda y el original no se toca.
-- El original va a la **papelera**, nunca a borrado permanente: el usuario
-  conserva 30 días para deshacer.
+- Por defecto el original va a la **papelera**: el usuario conserva 30 días
+  para deshacer. Solo con `permanentlyDeleteSource: true`, que el usuario
+  activa explícitamente, se borra para siempre (tras la misma verificación).
 - Los **documentos nativos de Google** (Docs, Sheets, Slides) se pueden copiar
   pero no mover: la copia es una conversión a `.docx`/`.xlsx`, no un duplicado
   idéntico, así que no es verificable y borrar el original destruiría el único
@@ -320,6 +323,9 @@ Cubren las piezas donde un error es caro y silencioso:
   Google.
 - **Transferir carpetas completas entre cuentas no está soportado**: hay que
   crear la carpeta en destino y transferir sus archivos.
-- **La papelera de Drive sigue consumiendo cuota.** Tras una redistribución, el
-  espacio no se libera del todo hasta que el usuario vacía la papelera en la
-  cuenta origen.
+- **La papelera de Drive sigue consumiendo cuota.** Tras una redistribución con
+  papelera, el espacio no se libera hasta vaciarla (`DELETE /drive/:accountId/trash`)
+  o usar `permanentlyDeleteSource`. Aun así, Google tarda unos minutos en
+  recalcular la cuota tras borrar.
+- **Gmail y Google Fotos no se distinguen.** La Drive API solo publica el uso
+  total y el de Drive; `usageOutsideDrive` es la suma de ambos.

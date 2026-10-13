@@ -243,6 +243,43 @@ export function useDeleteFile(accountId: string) {
   });
 }
 
+/**
+ * Vacía la papelera de una cuenta. Google tarda un rato en recalcular la
+ * cuota, así que refrescarla en el acto devolvería la cifra vieja: se descuenta
+ * en caché lo liberado y solo se recargan los listados.
+ */
+export function useEmptyTrash(accountId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api<{ freedBytes: number }>(`/drive/${accountId}/trash`, { method: 'DELETE' }),
+    onSuccess: ({ freedBytes }) => {
+      const release = (q: StorageQuota): StorageQuota => {
+        if (q.account.id !== accountId) return q;
+        const usage = Math.max(q.usage - freedBytes, 0);
+        return {
+          ...q,
+          usage,
+          usageInDrive: Math.max(q.usageInDrive - freedBytes, 0),
+          usageInDriveTrash: 0,
+          freeBytes: q.limit === null ? null : Math.max(q.limit - usage, 0),
+          usedPercent: q.limit ? Math.round((usage / q.limit) * 1000) / 10 : q.usedPercent,
+        };
+      };
+      qc.setQueryData<StorageQuota>(keys.accountQuota(accountId), (q) => q && release(q));
+      qc.setQueryData<AggregateQuota>(keys.quotaAll, (agg) => {
+        if (!agg) return agg;
+        const usage = Math.max(agg.totals.usage - freedBytes, 0);
+        return {
+          ...agg,
+          results: agg.results.map(release),
+          totals: { ...agg.totals, usage, freeBytes: agg.totals.limit === null ? null : Math.max(agg.totals.limit - usage, 0) },
+        };
+      });
+      void qc.invalidateQueries({ queryKey: [...keys.drive(accountId), 'folder'] });
+    },
+  });
+}
+
 export function invalidateAfterUpload(qc: QueryClient, accountId: string) {
   invalidateDrive(qc, accountId);
 }

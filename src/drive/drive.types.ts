@@ -69,8 +69,15 @@ export interface StorageQuotaView {
   /** Bytes totales. `null` en cuentas con almacenamiento ilimitado. */
   limit: number | null;
   usage: number;
+  /** Incluye la papelera: `usageInDriveTrash` es un subconjunto de esta cifra. */
   usageInDrive: number;
   usageInDriveTrash: number;
+  /**
+   * Gmail + Google Fotos juntos. La Drive API solo publica el total de la
+   * cuenta y el de Drive; el desglose por servicio que muestra Google One no
+   * está expuesto, así que lo que no es Drive es lo único que se puede derivar.
+   */
+  usageOutsideDrive: number;
   freeBytes: number | null;
   usedPercent: number | null;
 }

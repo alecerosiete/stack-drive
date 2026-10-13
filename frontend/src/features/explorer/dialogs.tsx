@@ -122,6 +122,7 @@ export function TransferDialog({ accountId, file, onClose }: { accountId: string
   const [targetId, setTargetId] = useState<string | null>(null);
   const [folder, setFolder] = useState<Crumb>({ id: 'root', name: 'Mi unidad' });
   const [deleteSource, setDeleteSource] = useState(false);
+  const [permanent, setPermanent] = useState(false);
 
   const native = file ? isGoogleNative(file.mimeType) : false;
   const candidates = accounts.data?.filter((a) => a.status === 'ACTIVE' && a.id !== accountId) ?? [];
@@ -131,6 +132,7 @@ export function TransferDialog({ accountId, file, onClose }: { accountId: string
   const close = () => {
     setTargetId(null);
     setDeleteSource(false);
+    setPermanent(false);
     setFolder({ id: 'root', name: 'Mi unidad' });
     onClose();
   };
@@ -156,6 +158,7 @@ export function TransferDialog({ accountId, file, onClose }: { accountId: string
                   from: { accountId, fileId: file.id },
                   to: { accountId: effectiveTarget, parentId: folder.id === 'root' ? undefined : folder.id },
                   deleteSource: deleteSource && !native,
+                  permanentlyDeleteSource: deleteSource && !native && permanent,
                   fileName: file.name,
                 },
                 {
@@ -244,13 +247,24 @@ export function TransferDialog({ accountId, file, onClose }: { accountId: string
               Los documentos nativos de Google solo se pueden copiar: la copia es una conversión de formato y no se puede verificar byte a byte, así que el original nunca se borra.
             </p>
           ) : (
-            <label className="flex cursor-pointer items-start gap-3 text-sm">
-              <input type="checkbox" checked={deleteSource} onChange={(e) => setDeleteSource(e.target.checked)} className="mt-0.5 size-4 accent-[var(--accent)]" />
-              <span>
-                Mover en lugar de copiar
-                <span className="block text-[13px] text-muted">El original irá a la papelera de la cuenta de origen tras verificar la copia.</span>
-              </span>
-            </label>
+            <div className="flex flex-col gap-3">
+              <label className="flex cursor-pointer items-start gap-3 text-sm">
+                <input type="checkbox" checked={deleteSource} onChange={(e) => setDeleteSource(e.target.checked)} className="mt-0.5 size-4 accent-[var(--accent)]" />
+                <span>
+                  Mover en lugar de copiar
+                  <span className="block text-[13px] text-muted">El original irá a la papelera de la cuenta de origen tras verificar la copia.</span>
+                </span>
+              </label>
+              {deleteSource && (
+                <label className="ml-7 flex cursor-pointer items-start gap-3 text-sm animate-fade">
+                  <input type="checkbox" checked={permanent} onChange={(e) => setPermanent(e.target.checked)} className="mt-0.5 size-4 accent-[var(--danger)]" />
+                  <span>
+                    Liberar el espacio al instante
+                    <span className="block text-[13px] text-muted">El original se borra para siempre en vez de ir a la papelera, que sigue ocupando cuota. Solo ocurre si la copia se verifica.</span>
+                  </span>
+                </label>
+              )}
+            </div>
           )}
         </div>
       )}

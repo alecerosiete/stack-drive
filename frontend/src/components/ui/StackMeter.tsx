@@ -91,3 +91,65 @@ export function QuotaBar({ percent, color, className }: { percent: number | null
     </div>
   );
 }
+
+/**
+ * Ocupación de una cuenta desglosada como la muestra Google One, hasta donde
+ * la API lo permite: Drive, su papelera y "Gmail + Fotos" juntos (Google no
+ * publica esos dos por separado).
+ */
+export function QuotaBreakdown({ quota, color, compact, className }: {
+  quota: StorageQuota;
+  color: string;
+  /** Leyenda en una línea, para tarjetas pequeñas. */
+  compact?: boolean;
+  className?: string;
+}) {
+  const total = quota.limit ?? quota.usage;
+  const trash = quota.usageInDriveTrash;
+  const segments = [
+    { key: 'drive', label: 'Drive', bytes: Math.max(quota.usageInDrive - trash, 0), style: { background: color } },
+    {
+      key: 'trash',
+      label: 'Papelera',
+      bytes: trash,
+      style: { background: `repeating-linear-gradient(135deg, ${color} 0 3px, ${color}55 3px 6px)` },
+    },
+    { key: 'other', label: 'Gmail + Fotos', bytes: quota.usageOutsideDrive, style: { background: 'var(--faint)' } },
+  ];
+  const percent = quota.usedPercent ?? 0;
+
+  return (
+    <div className={className}>
+      <div
+        className="flex h-1.5 w-full gap-px overflow-hidden rounded-full bg-sunken"
+        role="img"
+        aria-label={segments.map((s) => `${s.label}: ${formatBytes(s.bytes)}`).join(', ')}
+      >
+        {total > 0 &&
+          segments.map((s) =>
+            s.bytes > 0 ? (
+              <div
+                key={s.key}
+                className="h-full transition-[width] duration-700 ease-out first:rounded-l-full"
+                style={{ ...s.style, width: `${Math.min(100, (s.bytes / total) * 100)}%`, minWidth: 2 }}
+              />
+            ) : null,
+          )}
+      </div>
+      <ul className={cn('mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted', !compact && 'sm:gap-x-4')}>
+        {segments.map((s) => (
+          <li key={s.key} className={cn('flex items-center gap-1.5', s.bytes === 0 && 'opacity-50')}>
+            <span className="size-2 rounded-[2px]" style={s.style} />
+            {s.label}
+            <span className="font-mono text-faint tabular">{formatBytes(s.bytes)}</span>
+          </li>
+        ))}
+        {!compact && quota.limit !== null && (
+          <li className={cn('ml-auto font-mono tabular', percent >= 90 ? 'text-danger' : percent >= 75 ? 'text-warn' : 'text-faint')}>
+            {formatBytes(quota.freeBytes)} libres
+          </li>
+        )}
+      </ul>
+    </div>
+  );
+}

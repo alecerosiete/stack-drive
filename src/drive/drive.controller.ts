@@ -197,6 +197,19 @@ export class DriveController {
     return this.drive.updateFile(ctx, fileId, dto);
   }
 
+  /**
+   * Vacía la papelera de esta cuenta (irreversible). Es la forma de que la
+   * cuota de lo transferido con `deleteSource` se libere de inmediato.
+   */
+  @Delete('trash')
+  async emptyTrash(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('accountId', ParseUUIDPipe) accountId: string,
+  ) {
+    const ctx = await this.drive.context(user.id, accountId);
+    return this.drive.emptyTrash(ctx);
+  }
+
   /** Papelera por defecto; `?permanent=true` borra sin posibilidad de deshacer. */
   @Delete('files/:fileId')
   @HttpCode(HttpStatus.NO_CONTENT)

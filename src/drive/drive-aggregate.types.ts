@@ -34,6 +34,8 @@ export interface TransferResult {
   verification: 'md5' | 'size' | 'none';
   /** `true` si el original se envió a la papelera tras verificar. */
   sourceTrashed: boolean;
+  /** `true` si el original se borró de forma permanente (`permanentlyDeleteSource`). */
+  sourceDeleted: boolean;
   durationMs: number;
 }
 
