@@ -1,0 +1,557 @@
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent } from 'react';
+import { Link, useNavigate, useParams } from 'react-router';
+import { toast } from 'sonner';
+import {
+  ArrowDownToLine,
+  ArrowLeftRight,
+  ChevronRight,
+  CloudUpload,
+  ExternalLink,
+  FolderInput,
+  FolderOpen,
+  FolderPlus,
+  LayoutGrid,
+  List,
+  MoreHorizontal,
+  Pencil,
+  RotateCcw,
+  Search,
+  Trash2,
+  TriangleAlert,
+  Upload,
+  X,
+} from 'lucide-react';
+import { useAccountQuota, useAccounts, useDeleteFile, useFolder, useUpdateFile, type FolderOptions } from '../../api/hooks';
+import type { DriveFile } from '../../api/types';
+import { accountColor, accountLabel } from '../../lib/account-color';
+import { ApiError } from '../../lib/api';
+import { cn } from '../../lib/cn';
+import { downloadFile } from '../../lib/download';
+import { formatBytes, formatPercent, formatRelative } from '../../lib/format';
+import { Button } from '../../components/ui/Button';
+import { Badge } from '../../components/ui/Badge';
+import { Menu, type MenuItem } from '../../components/ui/Menu';
+import { EmptyState } from '../../components/ui/EmptyState';
+import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
+import { QuotaBar } from '../../components/ui/StackMeter';
+import { AccountAvatar } from '../../components/ui/AccountAvatar';
+import { inputClass } from '../../components/ui/Field';
+import { uploads } from '../uploads/upload-store';
+import { FileIcon, fileKind } from './file-icon';
+import { useBreadcrumbs } from './use-breadcrumbs';
+import { MoveDialog, NewFolderDialog, RenameDialog, TransferDialog } from './dialogs';
+
+type View = 'list' | 'grid';
+type Sort = FolderOptions['orderBy'];
+
+const SORTS: Array<{ value: Sort; label: string; descending: boolean }> = [
+  { value: 'folder,name', label: 'Nombre', descending: false },
+  { value: 'modifiedTime', label: 'Modificación', descending: true },
+  { value: 'quotaBytesUsed', label: 'Tamaño', descending: true },
+];
+
+function readPref<T extends string>(key: string, fallback: T, allowed: readonly T[]): T {
+  try {
+    const value = localStorage.getItem(key) as T | null;
+    return value && allowed.includes(value) ? value : fallback;
+  } catch {
+    return fallback;
+  }
+}
+function writePref(key: string, value: string) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    /* preferencia no persistente */
+  }
+}
+
+export function ExplorerPage() {
+  const { accountId = '', folderId = 'root' } = useParams();
+  const navigate = useNavigate();
+  const accounts = useAccounts();
+  const account = accounts.data?.find((a) => a.id === accountId);
+  const quota = useAccountQuota(accountId);
+
+  const [view, setView] = useState<View>(() => readPref('stackdrive.view', 'list', ['list', 'grid'] as const));
+  const [sort, setSort] = useState<Sort>(() => readPref('stackdrive.sort', 'folder,name', ['folder,name', 'modifiedTime', 'quotaBytesUsed'] as const));
+  const [showTrashed, setShowTrashed] = useState(false);
+  const [filter, setFilter] = useState('');
+  const [selected, setSelected] = useState<string | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const dragDepth = useRef(0);
+  const fileInput = useRef<HTMLInputElement>(null);
+
+  const [newFolderOpen, setNewFolderOpen] = useState(false);
+  const [renaming, setRenaming] = useState<DriveFile | null>(null);
+  const [moving, setMoving] = useState<DriveFile | null>(null);
+  const [transferring, setTransferring] = useState<DriveFile | null>(null);
+  const [deleting, setDeleting] = useState<DriveFile | null>(null);
+
+  // Al cambiar de carpeta, la selección y el filtro de la anterior ya no aplican.
+  useEffect(() => {
+    setSelected(null);
+    setFilter('');
+  }, [accountId, folderId]);
+
+  const sortDef = SORTS.find((s) => s.value === sort) ?? SORTS[0]!;
+  const folder = useFolder(accountId, folderId, { orderBy: sort, descending: sortDef.descending, includeTrashed: showTrashed });
+  const crumbs = useBreadcrumbs(accountId, folderId);
+  const update = useUpdateFile(accountId);
+  const remove = useDeleteFile(accountId);
+
+  const files = useMemo(() => {
+    const all = folder.data?.files ?? [];
+    const q = filter.trim().toLowerCase();
+    return q ? all.filter((f) => f.name.toLowerCase().includes(q)) : all;
+  }, [folder.data, filter]);
+
+  const open = useCallback(
+    (file: DriveFile) => {
+      if (file.isFolder) {
+        setFilter('');
+        setSelected(null);
+        navigate(`/drive/${accountId}/${file.id}`);
+      } else if (file.webViewLink) {
+        window.open(file.webViewLink, '_blank', 'noopener,noreferrer');
+      }
+    },
+    [accountId, navigate],
+  );
+
+  const download = (file: DriveFile) => {
+    const promise = downloadFile(accountId, file.id, file.name);
+    toast.promise(promise, {
+      loading: `Descargando «${file.name}»…`,
+      success: 'Descarga completada',
+      error: (e: Error) => e.message,
+    });
+  };
+
+  const trash = (file: DriveFile, trashed: boolean) =>
+    update.mutate(
+      { fileId: file.id, trashed },
+      {
+        onSuccess: () =>
+          toast.success(trashed ? `«${file.name}» a la papelera` : `«${file.name}» restaurado`, {
+            action: trashed ? { label: 'Deshacer', onClick: () => update.mutate({ fileId: file.id, trashed: false }) } : undefined,
+          }),
+      },
+    );
+
+  const actionsFor = (file: DriveFile): MenuItem[] => [
+    ...(file.isFolder ? [{ label: 'Abrir', icon: <FolderOpen />, onSelect: () => open(file) }] : []),
+    ...(!file.isFolder ? [{ label: 'Descargar', icon: <ArrowDownToLine />, onSelect: () => download(file) }] : []),
+    ...(file.webViewLink
+      ? [{ label: 'Abrir en Google Drive', icon: <ExternalLink />, onSelect: () => window.open(file.webViewLink!, '_blank', 'noopener,noreferrer') }]
+      : []),
+    { label: 'Renombrar', icon: <Pencil />, onSelect: () => setRenaming(file), separatorBefore: true },
+    { label: 'Mover a…', icon: <FolderInput />, onSelect: () => setMoving(file) },
+    ...(!file.isFolder ? [{ label: 'Transferir a otra cuenta', icon: <ArrowLeftRight />, onSelect: () => setTransferring(file) }] : []),
+    file.trashed
+      ? { label: 'Restaurar', icon: <RotateCcw />, onSelect: () => trash(file, false), separatorBefore: true }
+      : { label: 'Enviar a la papelera', icon: <Trash2 />, onSelect: () => trash(file, true), separatorBefore: true },
+    { label: 'Eliminar para siempre', icon: <Trash2 />, danger: true, onSelect: () => setDeleting(file) },
+  ];
+
+  // Teclado sobre la lista: flechas para moverse, Enter abre, F2 renombra,
+  // Supr manda a la papelera. Mismos atajos que un explorador de escritorio.
+  const onListKeyDown = (event: KeyboardEvent<HTMLElement>) => {
+    const index = files.findIndex((f) => f.id === selected);
+    const focusRow = (i: number) => {
+      const file = files[Math.max(0, Math.min(files.length - 1, i))];
+      if (!file) return;
+      setSelected(file.id);
+      document.getElementById(`row-${file.id}`)?.focus();
+    };
+    const current = files[index];
+    const step = view === 'grid' ? Math.max(1, Math.floor((event.currentTarget.clientWidth || 1) / 200)) : 1;
+    switch (event.key) {
+      case 'ArrowDown':
+        focusRow(index + step);
+        break;
+      case 'ArrowUp':
+        focusRow(index - step);
+        break;
+      case 'ArrowRight':
+        if (view === 'grid') focusRow(index + 1);
+        else return;
+        break;
+      case 'ArrowLeft':
+        if (view === 'grid') focusRow(index - 1);
+        else return;
+        break;
+      case 'Enter':
+        if (current) open(current);
+        break;
+      case 'F2':
+        if (current) setRenaming(current);
+        break;
+      case 'Delete':
+        if (current) trash(current, !current.trashed);
+        break;
+      case 'Backspace':
+        if (crumbs.data && folderId !== 'root') navigate(`/drive/${accountId}/${crumbs.data.at(-2)?.id ?? ''}`.replace(/\/$/, ''));
+        break;
+      default:
+        return;
+    }
+    event.preventDefault();
+  };
+
+  const onDrop = (event: DragEvent) => {
+    event.preventDefault();
+    dragDepth.current = 0;
+    setDragging(false);
+    if (event.dataTransfer.files.length) uploads.enqueue(accountId, folderId, event.dataTransfer.files);
+  };
+
+  if (accounts.isSuccess && !account) {
+    return (
+      <EmptyState icon={<TriangleAlert className="size-6" />} title="Esa cuenta no está vinculada" action={<Link to="/" className="text-sm font-medium text-accent">Volver al resumen</Link>}>
+        Puede que se desvinculara desde otra sesión.
+      </EmptyState>
+    );
+  }
+
+  const reauthNeeded = account?.needsReauth || (folder.error instanceof ApiError && folder.error.needsReauth);
+  const color = accountColor(accountId);
+
+  return (
+    <div
+      className="relative min-h-full"
+      onDragEnter={(e) => {
+        if (!e.dataTransfer.types.includes('Files')) return;
+        dragDepth.current += 1;
+        setDragging(true);
+      }}
+      onDragLeave={() => {
+        dragDepth.current -= 1;
+        if (dragDepth.current <= 0) setDragging(false);
+      }}
+      onDragOver={(e) => e.preventDefault()}
+      onDrop={onDrop}
+    >
+      {/* Franja con el color de capa de la cuenta: orienta sin leer nada. */}
+      <div className="h-1" style={{ background: color }} aria-hidden />
+
+      <div className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-8">
+        <header className="mb-5 flex flex-wrap items-center gap-4 animate-rise">
+          {account && <AccountAvatar account={account} size={40} />}
+          <div className="min-w-0 flex-1">
+            <h1 className="truncate font-display text-2xl font-bold tracking-[-0.03em]">{account ? accountLabel(account) : <span className="skeleton inline-block h-7 w-48" />}</h1>
+            {account?.alias && <p className="truncate font-mono text-xs text-faint">{account.email}</p>}
+          </div>
+          {quota.data && (
+            <div className="w-full sm:w-60">
+              <div className="mb-1.5 flex justify-between font-mono text-xs tabular">
+                <span>{formatBytes(quota.data.usage)} usados</span>
+                <span className="text-faint">{quota.data.limit ? formatPercent(quota.data.usedPercent) : '∞'}</span>
+              </div>
+              <QuotaBar percent={quota.data.usedPercent} color={color} />
+              {quota.data.usageInDriveTrash > 0 && (
+                <p className="mt-1 text-[11px] text-faint">{formatBytes(quota.data.usageInDriveTrash)} en la papelera</p>
+              )}
+            </div>
+          )}
+        </header>
+
+        {/* Migas de pan */}
+        <nav aria-label="Ruta" className="mb-4 flex min-h-8 items-center gap-1 overflow-x-auto text-sm">
+          <Link to={`/drive/${accountId}`} className={cn('shrink-0 rounded-md px-2 py-1 hover:bg-sunken', folderId === 'root' ? 'font-medium text-ink' : 'text-muted')}>
+            Mi unidad
+          </Link>
+          {folderId !== 'root' && crumbs.isPending && (
+            <>
+              <ChevronRight className="size-3.5 shrink-0 text-faint" />
+              <span className="skeleton h-4 w-24" />
+            </>
+          )}
+          {crumbs.data?.map((crumb, index) => (
+            <span key={crumb.id} className="flex shrink-0 items-center gap-1">
+              <ChevronRight className="size-3.5 text-faint" />
+              <Link
+                to={`/drive/${accountId}/${crumb.id}`}
+                aria-current={index === crumbs.data.length - 1 ? 'page' : undefined}
+                className={cn('rounded-md px-2 py-1 hover:bg-sunken', index === crumbs.data.length - 1 ? 'font-medium text-ink' : 'text-muted')}
+              >
+                {crumb.name}
+              </Link>
+            </span>
+          ))}
+        </nav>
+
+        {/* Barra de herramientas */}
+        <div className="mb-4 flex flex-wrap items-center gap-2">
+          <Button variant="primary" size="sm" icon={<Upload className="size-3.5" />} onClick={() => fileInput.current?.click()} disabled={reauthNeeded}>
+            Subir
+          </Button>
+          <input
+            ref={fileInput}
+            type="file"
+            multiple
+            hidden
+            onChange={(e) => {
+              if (e.target.files?.length) uploads.enqueue(accountId, folderId, e.target.files);
+              e.target.value = '';
+            }}
+          />
+          <Button size="sm" icon={<FolderPlus className="size-3.5" />} onClick={() => setNewFolderOpen(true)} disabled={reauthNeeded}>
+            Carpeta
+          </Button>
+
+          <div className="relative ml-auto w-full sm:w-56">
+            <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-faint" />
+            <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Filtrar esta carpeta" aria-label="Filtrar esta carpeta" className={cn(inputClass, 'h-8 w-full pl-8 text-[13px]')} />
+            {filter && (
+              <button onClick={() => setFilter('')} className="absolute top-1/2 right-2 -translate-y-1/2 text-faint hover:text-ink" aria-label="Limpiar filtro">
+                <X className="size-3.5" />
+              </button>
+            )}
+          </div>
+
+          <select
+            value={sort}
+            onChange={(e) => {
+              setSort(e.target.value as Sort);
+              writePref('stackdrive.sort', e.target.value);
+            }}
+            aria-label="Ordenar por"
+            className={cn(inputClass, 'h-8 pr-8 text-[13px]')}
+          >
+            {SORTS.map((s) => (
+              <option key={s.value} value={s.value}>{s.label}</option>
+            ))}
+          </select>
+
+          <label className="flex h-8 cursor-pointer items-center gap-2 rounded-lg px-2 text-[13px] text-muted hover:bg-sunken">
+            <input type="checkbox" checked={showTrashed} onChange={(e) => setShowTrashed(e.target.checked)} className="accent-[var(--accent)]" />
+            Papelera
+          </label>
+
+          <div className="flex rounded-lg border border-line bg-raised p-0.5" role="group" aria-label="Vista">
+            {(['list', 'grid'] as const).map((v) => (
+              <button
+                key={v}
+                onClick={() => {
+                  setView(v);
+                  writePref('stackdrive.view', v);
+                }}
+                aria-pressed={view === v}
+                aria-label={v === 'list' ? 'Lista' : 'Cuadrícula'}
+                className={cn('grid size-7 place-items-center rounded-md transition-colors', view === v ? 'bg-sunken text-ink' : 'text-faint hover:text-ink')}
+              >
+                {v === 'list' ? <List className="size-4" /> : <LayoutGrid className="size-4" />}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Contenido */}
+        {reauthNeeded ? (
+          <div className="card">
+            <EmptyState icon={<TriangleAlert className="size-6" />} title="Esta cuenta necesita volver a autorizarse" action={<Link to="/accounts"><Button variant="primary">Ir a cuentas</Button></Link>}>
+              Google revocó el acceso de StackDrive (cambio de contraseña, revocación manual o inactividad).
+            </EmptyState>
+          </div>
+        ) : folder.isError && !folder.data ? (
+          <div className="card">
+            <EmptyState icon={<TriangleAlert className="size-6" />} title="No se pudo abrir la carpeta" action={<Button onClick={() => void folder.refetch()}>Reintentar</Button>}>
+              {folder.error.message}
+            </EmptyState>
+          </div>
+        ) : folder.isPending ? (
+          <ListSkeleton />
+        ) : files.length === 0 ? (
+          <div className="card border-dashed">
+            <EmptyState
+              icon={filter ? <Search className="size-6" /> : <CloudUpload className="size-6" />}
+              title={filter ? 'Nada coincide con el filtro' : 'Carpeta vacía'}
+              action={!filter && <Button variant="primary" icon={<Upload className="size-4" />} onClick={() => fileInput.current?.click()}>Subir archivos</Button>}
+            >
+              {filter ? `No hay elementos con «${filter}» aquí.` : 'Arrastra archivos a cualquier parte de esta pantalla o usa el botón.'}
+            </EmptyState>
+          </div>
+        ) : view === 'list' ? (
+          <div className={cn('card overflow-hidden transition-opacity', folder.isPlaceholderData && 'opacity-60')}>
+            <div role="grid" aria-label="Archivos" aria-rowcount={files.length} onKeyDown={onListKeyDown}>
+              <div role="row" className="grid grid-cols-[1fr_auto] gap-4 border-b border-line bg-sunken/40 px-4 py-2 font-mono text-[11px] tracking-wide text-faint uppercase sm:grid-cols-[1fr_7rem_9rem_2.5rem]">
+                <span role="columnheader">Nombre</span>
+                <span role="columnheader" className="hidden text-right sm:block">Tamaño</span>
+                <span role="columnheader" className="hidden sm:block">Modificado</span>
+                <span role="columnheader" className="sr-only">Acciones</span>
+              </div>
+              {files.map((file, index) => (
+                <div
+                  key={file.id}
+                  id={`row-${file.id}`}
+                  role="row"
+                  tabIndex={selected === file.id || (!selected && index === 0) ? 0 : -1}
+                  aria-selected={selected === file.id}
+                  onClick={() => setSelected(file.id)}
+                  onDoubleClick={() => open(file)}
+                  onFocus={() => setSelected(file.id)}
+                  className={cn(
+                    'group grid cursor-default grid-cols-[1fr_auto] items-center gap-4 border-b border-line px-4 py-2 outline-none last:border-b-0 sm:grid-cols-[1fr_7rem_9rem_2.5rem]',
+                    'transition-colors hover:bg-sunken/40',
+                    selected === file.id && 'bg-accent-soft/50 hover:bg-accent-soft/60',
+                    file.trashed && 'opacity-60',
+                  )}
+                >
+                  <span role="gridcell" className="flex min-w-0 items-center gap-3">
+                    <FileIcon file={file} />
+                    <button
+                      tabIndex={-1}
+                      onClick={(e) => {
+                        if (file.isFolder) {
+                          e.stopPropagation();
+                          open(file);
+                        }
+                      }}
+                      className={cn('truncate text-left text-sm', file.isFolder && 'font-medium hover:underline underline-offset-4')}
+                    >
+                      {file.name}
+                    </button>
+                    {file.trashed && <Badge tone="danger">Papelera</Badge>}
+                  </span>
+                  <span role="gridcell" className="hidden text-right font-mono text-xs text-muted tabular sm:block">{file.isFolder ? '—' : formatBytes(file.size)}</span>
+                  <span role="gridcell" className="hidden text-xs text-muted sm:block">{formatRelative(file.modifiedTime)}</span>
+                  <span role="gridcell" className="flex justify-end">
+                    <RowMenu file={file} items={actionsFor(file)} />
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div
+            role="grid"
+            aria-label="Archivos"
+            onKeyDown={onListKeyDown}
+            className={cn('grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-3 transition-opacity', folder.isPlaceholderData && 'opacity-60')}
+          >
+            {files.map((file, index) => (
+              <div
+                key={file.id}
+                id={`row-${file.id}`}
+                role="gridcell"
+                tabIndex={selected === file.id || (!selected && index === 0) ? 0 : -1}
+                aria-selected={selected === file.id}
+                onClick={() => setSelected(file.id)}
+                onDoubleClick={() => open(file)}
+                onFocus={() => setSelected(file.id)}
+                className={cn(
+                  'card group relative flex cursor-default flex-col overflow-hidden outline-none transition-[border-color,transform] hover:-translate-y-0.5 hover:border-line-strong animate-rise',
+                  selected === file.id && 'border-accent ring-3 ring-accent/15',
+                  file.trashed && 'opacity-60',
+                )}
+                style={{ animationDelay: `${Math.min(index, 20) * 18}ms` }}
+              >
+                <Thumb file={file} />
+                <div className="flex items-center gap-2 border-t border-line px-3 py-2.5">
+                  <FileIcon file={file} className="size-4 shrink-0" />
+                  <span className="min-w-0 flex-1 truncate text-[13px] font-medium" title={file.name}>{file.name}</span>
+                  <RowMenu file={file} items={actionsFor(file)} />
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {folder.data && files.length > 0 && (
+          <p className="mt-4 text-center font-mono text-[11px] text-faint">
+            {files.length} elemento{files.length === 1 ? '' : 's'}
+            {folder.data.nextPageToken && ' · se muestran los primeros 500'}
+            {' · '}doble clic o Enter para abrir · F2 renombrar · Supr papelera
+          </p>
+        )}
+      </div>
+
+      {/* Superposición de arrastrar y soltar */}
+      {dragging && (
+        <div className="pointer-events-none fixed inset-0 z-40 grid place-items-center bg-canvas/70 backdrop-blur-sm animate-fade">
+          <div className="flex flex-col items-center gap-3 rounded-3xl border-2 border-dashed px-16 py-12" style={{ borderColor: color, background: `${color}14` }}>
+            <CloudUpload className="size-10" style={{ color }} />
+            <p className="font-display text-xl font-semibold">Suelta para subir</p>
+            <p className="text-sm text-muted">a {crumbs.data?.at(-1)?.name ?? 'Mi unidad'} · {account ? accountLabel(account) : ''}</p>
+          </div>
+        </div>
+      )}
+
+      <NewFolderDialog accountId={accountId} parentId={folderId} open={newFolderOpen} onClose={() => setNewFolderOpen(false)} />
+      <RenameDialog accountId={accountId} file={renaming} onClose={() => setRenaming(null)} />
+      <MoveDialog accountId={accountId} file={moving} onClose={() => setMoving(null)} />
+      <TransferDialog accountId={accountId} file={transferring} onClose={() => setTransferring(null)} />
+      <ConfirmDialog
+        open={!!deleting}
+        onClose={() => setDeleting(null)}
+        title="¿Eliminar para siempre?"
+        confirmLabel="Eliminar"
+        danger
+        loading={remove.isPending}
+        onConfirm={() =>
+          deleting &&
+          remove.mutate(deleting.id, {
+            onSuccess: () => {
+              toast.success(`«${deleting.name}» eliminado`);
+              setDeleting(null);
+            },
+          })
+        }
+      >
+        «<strong className="text-ink">{deleting?.name}</strong>» se borrará sin pasar por la papelera. {deleting?.isFolder && 'Incluye todo su contenido. '}No se puede deshacer.
+      </ConfirmDialog>
+    </div>
+  );
+}
+
+function RowMenu({ file, items }: { file: DriveFile; items: MenuItem[] }) {
+  return (
+    <Menu
+      label={`Acciones de ${file.name}`}
+      items={items}
+      trigger={(props) => (
+        <button
+          {...props}
+          tabIndex={-1}
+          aria-label={`Acciones de ${file.name}`}
+          className="grid size-7 place-items-center rounded-md text-faint opacity-60 transition hover:bg-sunken hover:text-ink group-hover:opacity-100 aria-expanded:opacity-100 group-aria-selected:opacity-100"
+        >
+          <MoreHorizontal className="size-4" />
+        </button>
+      )}
+    />
+  );
+}
+
+/** Miniatura de Google si la hay; si falla o no existe, icono grande del tipo. */
+function Thumb({ file }: { file: DriveFile }) {
+  const [broken, setBroken] = useState(false);
+  const kind = fileKind(file);
+  return (
+    <div className="relative grid aspect-[4/3] place-items-center overflow-hidden" style={{ background: `${kind.color}12` }}>
+      {file.thumbnailLink && !broken ? (
+        <img src={file.thumbnailLink} alt="" loading="lazy" referrerPolicy="no-referrer" onError={() => setBroken(true)} className="size-full object-cover" />
+      ) : (
+        <FileIcon file={file} className="size-12" />
+      )}
+      {!file.isFolder && file.size !== null && (
+        <span className="absolute right-2 bottom-2 rounded-md bg-canvas/85 px-1.5 py-0.5 font-mono text-[10px] text-muted backdrop-blur">{formatBytes(file.size)}</span>
+      )}
+    </div>
+  );
+}
+
+function ListSkeleton() {
+  return (
+    <div className="card overflow-hidden" aria-busy aria-label="Cargando archivos">
+      {Array.from({ length: 8 }, (_, i) => (
+        <div key={i} className="flex items-center gap-3 border-b border-line px-4 py-3 last:border-b-0">
+          <span className="skeleton size-5" />
+          <span className="skeleton h-3.5" style={{ width: `${30 + ((i * 37) % 40)}%` }} />
+          <span className="skeleton ml-auto h-3 w-16" />
+        </div>
+      ))}
+    </div>
+  );
+}

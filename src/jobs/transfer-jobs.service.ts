@@ -22,6 +22,11 @@ export interface TransferJobView {
   finishedAt: string | null;
   result: TransferResult | null;
   error: string | null;
+  /**
+   * Qué se pidió transferir. Sin esto el panel no sabe qué cuentas toca un
+   * job hasta que termina (`result` solo existe al completarse).
+   */
+  request: TransferDto;
 }
 
 /**
@@ -85,6 +90,7 @@ export class TransferJobsService {
       finishedAt: job.finishedOn ? new Date(job.finishedOn).toISOString() : null,
       result: (job.returnvalue as TransferResult | undefined) ?? null,
       error: job.failedReason ?? null,
+      request: job.data.transfer,
     };
   }
 
@@ -107,6 +113,7 @@ export class TransferJobsService {
         finishedAt: job.finishedOn ? new Date(job.finishedOn).toISOString() : null,
         result: (job.returnvalue as TransferResult | undefined) ?? null,
         error: job.failedReason ?? null,
+        request: job.data.transfer,
       })),
     );
   }

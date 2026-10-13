@@ -1,0 +1,203 @@
+@import 'tailwindcss';
+
+/*
+ * Tokens de diseño. Los colores semánticos son variables CSS (no clases fijas)
+ * para que el tema claro/oscuro cambie sin recompilar ni duplicar clases.
+ * Tailwind los expone como utilidades (`bg-surface`, `text-muted`...).
+ */
+@custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
+
+@theme {
+  --font-display: 'Bricolage Grotesque', ui-serif, Georgia, serif;
+  --font-sans: 'Geist', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'Geist Mono', ui-monospace, 'SFMono-Regular', monospace;
+
+  --color-canvas: var(--canvas);
+  --color-surface: var(--surface);
+  --color-raised: var(--raised);
+  --color-sunken: var(--sunken);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-faint: var(--faint);
+  --color-accent: var(--accent);
+  --color-accent-ink: var(--accent-ink);
+  --color-accent-soft: var(--accent-soft);
+  --color-ok: var(--ok);
+  --color-ok-soft: var(--ok-soft);
+  --color-warn: var(--warn);
+  --color-warn-soft: var(--warn-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+
+  --radius-card: 14px;
+
+  --animate-rise: rise 420ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  --animate-fade: fade 200ms ease-out both;
+  --animate-pop: pop 180ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  --animate-shimmer: shimmer 1.4s linear infinite;
+  --animate-stripes: stripes 900ms linear infinite;
+
+  @keyframes rise {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: none; }
+  }
+  @keyframes fade {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+  @keyframes pop {
+    from { opacity: 0; transform: scale(0.97) translateY(4px); }
+    to { opacity: 1; transform: none; }
+  }
+  @keyframes shimmer {
+    from { background-position: 200% 0; }
+    to { background-position: -200% 0; }
+  }
+  @keyframes stripes {
+    from { background-position: 0 0; }
+    to { background-position: 16px 0; }
+  }
+}
+
+/* Claro: papel cálido, tinta casi negra, acento naranja señal. */
+:root {
+  --canvas: #f4f1ea;
+  --surface: #fbfaf6;
+  --raised: #ffffff;
+  --sunken: #ebe7dd;
+  --line: #e1dccf;
+  --line-strong: #cbc4b3;
+  --ink: #1b1813;
+  --muted: #6b6457;
+  --faint: #9a9284;
+  --accent: #e8571c;
+  --accent-ink: #ffffff;
+  --accent-soft: #fbe3d6;
+  --ok: #1f8a5b;
+  --ok-soft: #dcf1e6;
+  --warn: #b7791f;
+  --warn-soft: #f8ecd2;
+  --danger: #c8372d;
+  --danger-soft: #f8dcd9;
+  --shadow: 0 1px 0 rgb(27 24 19 / 0.04), 0 8px 24px -12px rgb(27 24 19 / 0.18);
+  --grain-opacity: 0.035;
+  color-scheme: light;
+}
+
+/* Oscuro: carbón cálido en lugar de gris azulado genérico. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --canvas: #12100d;
+    --surface: #1a1714;
+    --raised: #221e1a;
+    --sunken: #0d0b09;
+    --line: #2d2823;
+    --line-strong: #3e3730;
+    --ink: #f2ede4;
+    --muted: #a39a8b;
+    --faint: #6f675b;
+    --accent: #ff7a3d;
+    --accent-ink: #1b0e06;
+    --accent-soft: #3a2216;
+    --ok: #4cc38a;
+    --ok-soft: #173126;
+    --warn: #e8b04a;
+    --warn-soft: #362a14;
+    --danger: #ff6b5e;
+    --danger-soft: #3b1a17;
+    --shadow: 0 1px 0 rgb(0 0 0 / 0.3), 0 12px 32px -12px rgb(0 0 0 / 0.6);
+    --grain-opacity: 0.05;
+    color-scheme: dark;
+  }
+}
+:root[data-theme='dark'] {
+  --canvas: #12100d;
+  --surface: #1a1714;
+  --raised: #221e1a;
+  --sunken: #0d0b09;
+  --line: #2d2823;
+  --line-strong: #3e3730;
+  --ink: #f2ede4;
+  --muted: #a39a8b;
+  --faint: #6f675b;
+  --accent: #ff7a3d;
+  --accent-ink: #1b0e06;
+  --accent-soft: #3a2216;
+  --ok: #4cc38a;
+  --ok-soft: #173126;
+  --warn: #e8b04a;
+  --warn-soft: #362a14;
+  --danger: #ff6b5e;
+  --danger-soft: #3b1a17;
+  --shadow: 0 1px 0 rgb(0 0 0 / 0.3), 0 12px 32px -12px rgb(0 0 0 / 0.6);
+  --grain-opacity: 0.05;
+  color-scheme: dark;
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    background: var(--canvas);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    font-feature-settings: 'ss01', 'cv11';
+    -webkit-font-smoothing: antialiased;
+  }
+  /* Grano sutil: da textura de papel/pantalla sin coste de imágenes. */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 100;
+    opacity: var(--grain-opacity);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+  ::selection {
+    background: var(--accent);
+    color: var(--accent-ink);
+  }
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+  dialog::backdrop {
+    background: rgb(10 8 6 / 0.55);
+    backdrop-filter: blur(3px);
+  }
+}
+
+@layer components {
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-card);
+    box-shadow: var(--shadow);
+  }
+  .skeleton {
+    background: linear-gradient(90deg, var(--sunken) 25%, var(--line) 50%, var(--sunken) 75%);
+    background-size: 200% 100%;
+    animation: var(--animate-shimmer);
+    border-radius: 6px;
+  }
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+  }
+}
