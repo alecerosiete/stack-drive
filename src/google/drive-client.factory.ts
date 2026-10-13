@@ -1,12 +1,18 @@
 import { Injectable } from '@nestjs/common';
 import { drive_v3, google } from 'googleapis';
 import { GoogleAccount } from '@prisma/client';
+import { OAuth2Client } from 'google-auth-library';
 import { GoogleAccountRepository } from './google-account.repository';
 import { GoogleTokenService } from './google-token.service';
 
 export interface DriveContext {
   account: GoogleAccount;
   drive: drive_v3.Drive;
+  /**
+   * El mismo cliente autorizado que usa `drive`, para las peticiones que la
+   * librería no cubre (la subida *resumable*). Solo lleva access_token.
+   */
+  auth: OAuth2Client;
 }
 
 /**
@@ -32,7 +38,7 @@ export class DriveClientFactory {
   async forResolvedAccount(account: GoogleAccount): Promise<DriveContext> {
     const auth = await this.tokens.getAuthorizedClient(account);
     void this.accounts.touch(account.id);
-    return { account, drive: google.drive({ version: 'v3', auth }) };
+    return { account, auth, drive: google.drive({ version: 'v3', auth }) };
   }
 
   /** Todas las cuentas utilizables del usuario, para operaciones agregadas. */

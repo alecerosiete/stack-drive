@@ -249,6 +249,7 @@ describe('DriveAggregateService.transfer (borrado del original)', () => {
       forAccount: jest.fn(async (_user: string, id: string) =>
         ctxFor(id === origin.id ? origin : target),
       ),
+      forResolvedAccount: jest.fn(async (acc: GoogleAccount) => ctxFor(acc)),
     } as unknown as DriveClientFactory;
 
     const deleteFile = jest.fn().mockResolvedValue(undefined);
@@ -268,10 +269,19 @@ describe('DriveAggregateService.transfer (borrado del original)', () => {
         size: 100,
       }),
       uploadFile: jest.fn().mockResolvedValue({ id: 'copia', ...uploaded }),
+      openMedia: jest.fn().mockResolvedValue(Readable.from([])),
+      // Abre el origen como lo haría la subida real, para comprobar desde qué
+      // cuenta y archivo se leen los bytes.
+      uploadResumable: jest.fn(
+        async (_ctx: DriveContext, _file: unknown, open: (offset: number) => Promise<Readable>) => {
+          await open(0);
+          return { id: 'copia', ...uploaded };
+        },
+      ),
       deleteFile,
     } as unknown as DriveService;
 
-    return { service: new DriveAggregateService(clients, drive, config), deleteFile };
+    return { service: new DriveAggregateService(clients, drive, config), deleteFile, drive };
   }
 
   const request = (extra: Partial<TransferDto> = {}): TransferDto =>
@@ -308,6 +318,38 @@ describe('DriveAggregateService.transfer (borrado del original)', () => {
       service.transfer('user-1', request({ permanentlyDeleteSource: true })),
     ).rejects.toThrow(/no se pudo verificar/i);
     expect(deleteFile).not.toHaveBeenCalled();
+  });
+
+  it('un archivo binario va por la subida reanudable, leyendo del origen', async () => {
+    const { service, drive } = transferHarness();
+
+    await service.transfer('user-1', request({ to: { accountId: target.id, parentId: 'dest' } }));
+
+    expect(drive.uploadResumable).toHaveBeenCalledWith(
+      expect.objectContaining({ account: target }),
+      { name: 'video.mp4', mimeType: 'video/mp4', size: 100 },
+      expect.any(Function),
+      { parentId: 'dest' },
+    );
+    expect(drive.openMedia).toHaveBeenCalledWith(expect.objectContaining({ account: origin }), 'f1', 0);
+    expect(drive.uploadFile).not.toHaveBeenCalled();
+  });
+
+  it('un documento de Google se exporta y va por la subida simple (no tiene tamaño)', async () => {
+    const { service, drive } = transferHarness();
+    (drive.getFile as jest.Mock).mockResolvedValue({
+      id: 'f1',
+      name: 'Acta',
+      mimeType: 'application/vnd.google-apps.document',
+      isFolder: false,
+      size: null,
+      md5Checksum: null,
+    });
+
+    await service.transfer('user-1', request({ deleteSource: false }));
+
+    expect(drive.uploadFile).toHaveBeenCalled();
+    expect(drive.uploadResumable).not.toHaveBeenCalled();
   });
 
   it('rechaza permanentlyDeleteSource sin deleteSource', async () => {

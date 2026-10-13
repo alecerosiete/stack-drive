@@ -157,7 +157,8 @@ necesitas probar contra servicios reales, `docker compose up -d` primero.
 
 ## Lo que NO hay (todavía)
 
-Ver "Límites conocidos" en `README.md` — *resumable upload* y desglose
+Ver "Límites conocidos" en `README.md` — *resumable upload* desde el
+navegador (solo las transferencias entre cuentas son reanudables) y desglose
 separado de Gmail y Fotos. No asumas que existen al planificar un cambio
 relacionado.
 
