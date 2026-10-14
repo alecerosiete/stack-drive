@@ -111,22 +111,44 @@ cifrado que no mida 32 bytes).
 > ⚠️ Si pierdes `TOKEN_ENCRYPTION_KEY`, los `refresh_token` almacenados son
 > irrecuperables y todos los usuarios tendrán que volver a vincular sus cuentas.
 
-### Paso 3 — Infraestructura y base de datos
+### Paso 3 — Arrancar todo con Docker
 
 ```bash
-docker compose up -d        # PostgreSQL + Redis
-npm install
-npx prisma migrate deploy   # aplica prisma/migrations/0_init
-npm run start:dev
+docker compose up -d --build   # PostgreSQL, Redis, migraciones, API (:3000) y panel (:5173)
 ```
 
-### Paso 4 — Panel web (opcional, para probar sin curl)
+Es lo único que hace falta: el servicio `migrate` aplica las migraciones
+pendientes antes de que arranque la API, que usa el mismo `.env` (el compose
+solo sustituye las direcciones de PostgreSQL y Redis por las de la red
+interna). Todos los servicios llevan `restart: unless-stopped`, así que, con
+el servicio de Docker habilitado al arrancar (`sudo systemctl enable docker`),
+**vuelven solos tras reiniciar el equipo**.
+
+Tras cambiar código, vuelve a ejecutar `docker compose up -d --build`. El
+panel incrusta `VITE_API_URL` al compilarse: si la API no está en
+`http://localhost:3000`, cámbiala en `args` del servicio `web` y reconstruye.
 
 ```bash
-cd frontend
-cp .env.example .env        # VITE_API_URL=http://localhost:3000
+docker compose ps                # estado
+docker compose logs -f api       # logs de la API
+docker compose stop              # parar (no vuelve a arrancar hasta el próximo `up`)
+```
+
+### Paso 4 — Desarrollo con recarga en caliente (opcional)
+
+Para trabajar en el código, para los contenedores de la API y el panel y
+ejecútalos en local; PostgreSQL y Redis siguen en Docker, expuestos en el host:
+
+```bash
+docker compose stop api web
 npm install
-npm run dev                 # http://localhost:5173
+npx prisma migrate deploy
+npm run start:dev                # API en http://localhost:3000
+
+cd frontend
+cp .env.example .env             # VITE_API_URL=http://localhost:3000
+npm install
+npm run dev                      # http://localhost:5173
 ```
 
 App de React + Vite en `frontend/`. Cubre el flujo completo: registro/login,

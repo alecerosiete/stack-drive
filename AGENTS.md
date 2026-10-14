@@ -32,12 +32,22 @@ ejercitar el flujo completo sin herramientas externas.
 
 ```bash
 cp .env.example .env            # y rellena GOOGLE_CLIENT_ID/SECRET + npm run keygen (x2)
-docker compose up -d            # PostgreSQL + Redis
+docker compose up -d --build    # todo: PostgreSQL, Redis, migraciones, API :3000 y panel :5173
+```
+
+Para desarrollar con recarga en caliente, `docker compose stop api web` y:
+
+```bash
 npm install
 npx prisma migrate deploy
 npm run start:dev               # API en :3000
 cd frontend && npm install && npm run dev   # panel en :5173 (otra terminal)
 ```
+
+Los Dockerfile (`Dockerfile`, `frontend/Dockerfile`) instalan las
+dependencias de producción con `--ignore-scripts` y copian el cliente de
+Prisma ya generado. Si añades una dependencia de producción que compile algo
+al instalarse (`binding.gyp`), eso deja de funcionar: revísalo.
 
 Sin `.env` válido, `loadConfiguration()` lanza al arrancar — es intencional,
 no un bug: la app se niega a escuchar con configuración a medias (ver

@@ -1,5 +1,20 @@
-# Dependencias de infraestructura para desarrollo local.
-# La API se ejecuta fuera del compose con `npm run start:dev`.
+# Todo StackDrive en contenedores: PostgreSQL, Redis, la API y el panel.
+#
+#   docker compose up -d --build     # primera vez y tras cada cambio de código
+#
+# `restart: unless-stopped` + el servicio de Docker habilitado al arrancar
+# (`sudo systemctl enable docker`) hacen que todo vuelva solo tras reiniciar
+# el equipo. Solo se queda parado lo que se pare a mano con `docker compose stop`.
+#
+# Ojo: al reiniciar el equipo es Docker quien relanza los contenedores, y
+# Docker no conoce `depends_on`. La API puede arrancar antes que PostgreSQL:
+# falla al conectar, termina y Docker la reinicia hasta que la base de datos
+# responde (unos segundos). `migrate` no se repite, ni hace falta: solo hay
+# migraciones nuevas tras un cambio de código, que pasa por `up -d --build`.
+#
+# Para desarrollar la API o el panel con recarga en caliente, para su
+# contenedor (`docker compose stop api web`) y usa `npm run start:dev` /
+# `npm run dev` como siempre: PostgreSQL y Redis siguen expuestos en el host.
 services:
   postgres:
     image: postgres:16-alpine
@@ -34,6 +49,58 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+
+  # Aplica las migraciones pendientes y termina. Corre antes de la API en cada
+  # `docker compose up`; si no hay nada que aplicar, no hace nada.
+  migrate:
+    build:
+      context: .
+      target: build
+    container_name: stackdrive-migrate
+    command: ['npx', 'prisma', 'migrate', 'deploy']
+    environment:
+      DATABASE_URL: postgresql://stackdrive:stackdrive@postgres:5432/stackdrive?schema=public
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: 'no'
+
+  api:
+    build: .
+    container_name: stackdrive-api
+    restart: unless-stopped
+    # Mismo `.env` que en desarrollo; solo cambian las direcciones de
+    # PostgreSQL y Redis, que dentro de la red del compose van por nombre.
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://stackdrive:stackdrive@postgres:5432/stackdrive?schema=public
+      REDIS_HOST: redis
+      REDIS_PORT: '6379'
+      PORT: '3000'
+    ports:
+      - '3000:3000'
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  # Se publica en el 5173, el mismo puerto que `npm run dev`, para que no haya
+  # que tocar CORS_ORIGINS ni POST_LINK_REDIRECT_URL en el `.env`.
+  web:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_URL: https://stackdrive.alecerosiete.com/api
+    container_name: stackdrive-web
+    restart: unless-stopped
+    ports:
+      - '5173:80'
+    depends_on:
+      - api
 
 volumes:
   postgres-data:
